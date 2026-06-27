@@ -14,12 +14,13 @@ from toolsCalc import calculator
 # ==========================================
 
 st.set_page_config(
-    page_title="AI Study Buddy",
+    page_title="AI Buddy",
     page_icon="🎓",
     layout="wide"
 )
 
-st.title("🎓 AI Study Buddy")
+st.title("AI Buddy")
+st.caption("Calculator + Search Tools")
 
 
 

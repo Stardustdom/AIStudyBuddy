@@ -38,5 +38,25 @@
             "Magnetic Levitation and its Relation to Antigravity",
             "Future Applications of Antigravity Technology"
         ]
+    },
+    {
+        "topic": "Antigravity",
+        "subtopics": [
+            "Introduction to Antigravity and its Theories",
+            "Classical Electromagnetism and Gravitation",
+            "Modern Physics Theories (Quantum Mechanics, General Relativity)",
+            "Magnetic Levitation and its Relation to Antigravity",
+            "Major Experiments and Research Findings"
+        ]
+    },
+    {
+        "topic": "JavaScript",
+        "subtopics": [
+            "Introduction to JavaScript, Browser Environment",
+            "Variables, Data Types and Operators",
+            "Control Structures (if-else, switch)",
+            "Functions",
+            "Arrays, Loops and Objects"
+        ]
     }
 ]

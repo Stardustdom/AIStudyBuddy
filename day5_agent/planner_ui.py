@@ -15,7 +15,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🎓 AI Study Planner")
+st.title("AI Study Planner")
 st.caption("Generate structured 5-day learning plans")
 
 

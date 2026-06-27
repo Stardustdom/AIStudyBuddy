@@ -5,7 +5,7 @@ import os
 
 def save_plan(plan):
 
-    filename = "day5 agent/study_plans.json"
+    filename = "day5_agent/study_plans.json"
 
     if os.path.exists(filename):
 
@@ -103,48 +103,51 @@ Output:
     ]
 }
 """
-
-
-while True:
-
-    topic = input("\nEnter study topic (or exit): ")
-
-    if topic.lower() == "exit":
-        break
+def generate_plan(topic: str):
 
     prompt = f"Topic: {topic}"
 
     plan = None
 
-    try:
+    for attempt in range(3):
 
-        for attempt in range(3):
+        response = llm.invoke(
+            [
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
 
-            response = llm.invoke(
-                [
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
+        try:
+            plan = json.loads(response.content)
+            return plan
 
-            try:
-                plan = json.loads(response.content)
-                break
+        except json.JSONDecodeError:
 
-            except json.JSONDecodeError:
+            if attempt == 2:
+                raise
 
-                if attempt == 2:
-                    raise
+            print(f"Retrying... ({attempt + 1}/3)")
 
-                print(f"Retrying... ({attempt + 1}/3)")
+if __name__ == "__main__":
 
-        if plan:
+    while True:
+
+        topic = input("\nEnter study topic (or exit): ")
+
+        if topic.lower() == "exit":
+            break
+
+        try:
+
+            plan = generate_plan(topic)
+
             save_plan(plan)
 
             print("\n===== STUDY PLAN =====")
@@ -153,10 +156,10 @@ while True:
             for i, item in enumerate(plan["subtopics"], start=1):
                 print(f"Day {i}: {item}")
 
-    except json.JSONDecodeError:
+        except json.JSONDecodeError:
 
-        print("\nInvalid JSON received from model.")
+            print("\nInvalid JSON received from model.")
 
-    except Exception as e:
+        except Exception as e:
 
-        print(f"\nError: {e}")
+            print(f"\nError: {e}")
