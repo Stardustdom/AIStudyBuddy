@@ -10,7 +10,9 @@ from state import AgentState
 
 from day5_agent.plannerAgent import generate_plan
 from day8_agent.researcher_agent import researcher
+from memory.long_term import LongTermMemory
 
+ltm = LongTermMemory()
 
 def planner_node(state: AgentState):
 
@@ -37,13 +39,29 @@ def researcher_node(state: AgentState):
 
         print(f"\nResearching: {subtopic}")
 
-        result = researcher.invoke(
-            {
-                "subtopic": subtopic
-            }
-        )
+        # Check if we already have similar notes
+        results = ltm.search(subtopic)
 
-        notes.append(result)
+        if results["documents"] and results["documents"][0]:
+
+            print("✓ Found existing notes in ChromaDB")
+
+            notes.append({
+                "topic": subtopic,
+                "notes": results["documents"][0][0]
+            })
+
+        else:
+
+            print("✗ No notes found. Researching...")
+
+            result = researcher.invoke(
+                {
+                    "subtopic": subtopic
+                }
+            )
+
+            notes.append(result)
 
     state["study_notes"] = notes
 
