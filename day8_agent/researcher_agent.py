@@ -2,7 +2,7 @@ from langchain.tools import tool
 from tavily import TavilyClient
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
-
+from memory.long_term import LongTermMemory
 import os
 
 # Load environment variables
@@ -19,17 +19,14 @@ llm = ChatOllama(
     temperature=0.1
 )
 
+# Long-term memory
+ltm = LongTermMemory()
+
 
 @tool
-def researcher(subtopic: str) -> str:
+def researcher(subtopic: str) -> dict:
     """
     Search the web and generate structured study notes.
-
-    Input:
-        subtopic (str)
-
-    Output:
-        Study notes (str)
     """
 
     print(f"\n[SEARCHING] {subtopic}")
@@ -41,7 +38,7 @@ def researcher(subtopic: str) -> str:
             max_results=5
         )
 
-        # Extract only useful content
+        # Extract useful content
         content = "\n\n".join(
             result["content"]
             for result in search_results["results"]
@@ -76,10 +73,16 @@ Instructions:
 
         response = llm.invoke(prompt)
 
+        # Save to ChromaDB
+        ltm.add_note(subtopic, response.content)
+
         return {
-    "topic": subtopic,
-    "notes": response.content
-}
+            "topic": subtopic,
+            "notes": response.content
+        }
 
     except Exception as e:
-        return f"Error: {str(e)}"
+        return {
+            "topic": subtopic,
+            "notes": f"Error: {str(e)}"
+        }
