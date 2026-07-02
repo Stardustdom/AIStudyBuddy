@@ -1,4 +1,5 @@
 import chromadb
+import hashlib
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 embedding_function = SentenceTransformerEmbeddingFunction(
@@ -16,24 +17,33 @@ collection = client.get_or_create_collection(
 class LongTermMemory:
 
     def add_note(self, topic, note):
+        """
+        Save a note into ChromaDB.
+        Each topic has a unique ID so duplicate topics aren't stored.
+        """
 
-        ids = [str(abs(hash(topic + note)))]
+        doc_id = hashlib.sha256(topic.encode()).hexdigest()
+
+        # Remove existing note if present
+        try:
+            collection.delete(ids=[doc_id])
+        except Exception:
+            pass
 
         collection.add(
-            ids=ids,
+            ids=[doc_id],
             documents=[note],
             metadatas=[{"topic": topic}]
         )
 
-    def search(self, query, k=3):
+    def get_note(self, topic):
+        """
+        Retrieve notes only if the exact topic exists.
+        """
 
-        results = collection.query(
-            query_texts=[query],
-            n_results=k
+        return collection.get(
+            where={"topic": topic}
         )
 
-        return results
-
     def count(self):
-
         return collection.count()
