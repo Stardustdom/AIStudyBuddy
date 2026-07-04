@@ -1,14 +1,8 @@
-import sys
-import os
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from day9_pipeline.state import AgentState
 import streamlit as st
 
 from ui.sidebar import render_sidebar
 from ui.chat import render_chat
-from ui.workspace import render_workspace
+from ui.study_page import render_study_page
 
 from memory.chat_history import ChatHistory
 
@@ -21,7 +15,14 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
-
+st.markdown("""
+<style>
+section[data-testid="stSidebar"]{
+    min-width: 360px;
+    max-width: 360px;
+}
+</style>
+""", unsafe_allow_html=True)
 # ==========================================
 # Initialize Chat History
 # ==========================================
@@ -36,6 +37,8 @@ DEFAULTS = {
     "current_chat": None,
     "messages": [],
     "workspace": [],
+    "selected_workspace": None,
+    "loaded_chat": None
 }
 
 for key, value in DEFAULTS.items():
@@ -56,28 +59,43 @@ if st.session_state.current_chat is None:
         st.session_state.current_chat = history.create_chat()
 
 # ==========================================
-# Restore Saved Chat
+# Restore Chat
 # ==========================================
 
-saved = history.load_state(
-    st.session_state.current_chat
-)
+# ==========================================
+# Restore Chat
+# ==========================================
 
-if saved:
+if (
+    "loaded_chat" not in st.session_state
+    or st.session_state.loaded_chat != st.session_state.current_chat
+):
 
-    st.session_state.messages = saved.get(
-        "messages",
-        []
+    saved = history.load_state(
+        st.session_state.current_chat
     )
 
-    st.session_state.workspace = saved.get(
-        "workspace",
-        []
-    )
+    if saved:
 
-else:
+        st.session_state.messages = saved.get(
+            "messages",
+            []
+        )
 
-    st.session_state.messages = history.get_messages(
+        st.session_state.workspace = saved.get(
+            "workspace",
+            []
+        )
+
+    else:
+
+        st.session_state.messages = history.get_messages(
+            st.session_state.current_chat
+        )
+
+        st.session_state.workspace = []
+
+    st.session_state.loaded_chat = (
         st.session_state.current_chat
     )
 
@@ -88,23 +106,17 @@ else:
 render_sidebar()
 
 # ==========================================
-# Title
+# Main Area
 # ==========================================
 
-st.title("📚 AI Study Buddy")
+if st.session_state.selected_workspace is None:
 
-st.caption(
-    "Learn • Revise • Practice • Chat"
-)
+    st.title("AI Study Buddy")
 
-# ==========================================
-# Chat Window
-# ==========================================
+   
 
-render_chat()
+    render_chat()
 
-# ==========================================
-# Workspace
-# ==========================================
+else:
 
-render_workspace()
+    render_study_page()

@@ -1,12 +1,16 @@
-import chromadb
 import hashlib
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import chromadb
+from chromadb.utils.embedding_functions import (
+    SentenceTransformerEmbeddingFunction
+)
 
 embedding_function = SentenceTransformerEmbeddingFunction(
     model_name="all-MiniLM-L6-v2"
 )
 
-client = chromadb.PersistentClient(path="./chroma_db")
+client = chromadb.PersistentClient(
+    path="./chroma_db"
+)
 
 collection = client.get_or_create_collection(
     name="study_notes",
@@ -16,34 +20,69 @@ collection = client.get_or_create_collection(
 
 class LongTermMemory:
 
+    # ==========================================
+    # Save
+    # ==========================================
+
     def add_note(self, topic, note):
-        """
-        Save a note into ChromaDB.
-        Each topic has a unique ID so duplicate topics aren't stored.
-        """
 
-        doc_id = hashlib.sha256(topic.encode()).hexdigest()
+        doc_id = hashlib.sha256(
+            topic.encode()
+        ).hexdigest()
 
-        # Remove existing note if present
         try:
             collection.delete(ids=[doc_id])
-        except Exception:
+        except:
             pass
 
         collection.add(
+
             ids=[doc_id],
+
             documents=[note],
-            metadatas=[{"topic": topic}]
+
+            metadatas=[
+                {
+                    "topic": topic
+                }
+            ]
+
         )
+
+    # ==========================================
+    # Exact lookup
+    # ==========================================
 
     def get_note(self, topic):
-        """
-        Retrieve notes only if the exact topic exists.
-        """
 
         return collection.get(
-            where={"topic": topic}
+
+            where={
+                "topic": topic
+            }
+
         )
 
+    # ==========================================
+    # Semantic Search ⭐
+    # ==========================================
+
+    def search(self, query, k=3):
+
+        results = collection.query(
+
+            query_texts=[query],
+
+            n_results=k
+
+        )
+
+        return results
+
+    # ==========================================
+    # Count
+    # ==========================================
+
     def count(self):
+
         return collection.count()

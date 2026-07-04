@@ -1,4 +1,5 @@
 import json
+import re
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 
@@ -6,97 +7,70 @@ load_dotenv()
 
 llm = ChatOllama(
     model="mistral",
-    temperature=0.2
+    temperature=0
 )
 
 
-def quiz_generator(notes: str) -> list:
-    """
-    Generate a comprehensive 15-question MCQ quiz
-    covering all study notes.
-    """
+def clean_json(text: str):
+
+    text = text.strip()
+
+    # Remove markdown
+    text = text.replace("```json", "").replace("```", "").strip()
+
+    # Extract first JSON array
+    match = re.search(r"\[[\s\S]*\]", text)
+
+    if match:
+        return match.group(0)
+
+    return text
+
+
+def quiz_generator(notes: str):
 
     prompt = f"""
-You are an experienced university professor and exam setter.
+Generate EXACTLY 15 MCQs from these notes.
 
-Generate EXACTLY 15 multiple-choice questions from the study notes.
+Return ONLY a valid JSON array.
 
-IMPORTANT RULES
+Each object MUST be:
 
-1. Cover the ENTIRE study material.
-
-2. Include easy, medium and difficult questions.
-
-3. Test conceptual understanding rather than memorization.
-
-4. Every question MUST belong to one of the study subtopics.
-
-5. Every question MUST contain these fields:
-
-- topic
-- question
-- options
-- answer
-
-6. "topic" should be the exact subtopic from which the question was generated.
-
-7. Each question must have exactly four options.
-
-8. The incorrect options should be believable.
-Do NOT use unrelated options.
-
-9. Shuffle the correct answer randomly.
-
-10. The answer must exactly match one option.
-
-11. Return ONLY valid JSON.
-
-Example:
-
-[
-    {{
-        "topic": "Newton's Law of Universal Gravitation",
-        "question": "According to Newton's Law of Gravitation, what happens when the distance between two objects doubles?",
-        "options": [
-            "The force becomes one-fourth",
-            "The force doubles",
-            "The force remains unchanged",
-            "The force becomes four times"
-        ],
-        "answer": "The force becomes one-fourth"
-    }}
-]
+{{
+    "topic":"...",
+    "question":"...",
+    "options":[
+        "...",
+        "...",
+        "...",
+        "..."
+    ],
+    "answer":"..."
+}}
 
 Study Notes:
 
 {notes}
 """
 
-    try:
+    for attempt in range(3):
 
-        response = llm.invoke(prompt)
+        try:
 
-        response_text = response.content.strip()
+            response = llm.invoke(prompt)
 
-        if response_text.startswith("```"):
+            text = clean_json(response.content)
 
-            response_text = (
-                response_text
-                .replace("```json", "")
-                .replace("```", "")
-                .strip()
-            )
+            quiz = json.loads(text)
 
-        quiz = json.loads(response_text)
+            return quiz[:15]
 
-        if len(quiz) > 15:
-            quiz = quiz[:15]
+        except Exception as e:
 
-        return quiz
+            print(f"\nQuiz attempt {attempt+1} failed")
+            print(e)
 
-    except Exception as e:
+            print("\nModel Output:\n")
+            print(response.content)
 
-        print("\nQuiz generation failed")
-        print(e)
-
-        return []
+    return []

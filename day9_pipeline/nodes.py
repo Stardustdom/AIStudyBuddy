@@ -102,14 +102,37 @@ def quiz_node(state: AgentState):
 
     combined_notes = ""
 
-    for note in state["study_notes"]:
+    # ---------------------------------------
+    # Retry Mode
+    # ---------------------------------------
 
-        combined_notes += (
-            f"\n\n### {note['topic']}\n"
-            f"{note['notes']}"
-        )
+    if state.get("weak_topics"):
 
-    print("Generating comprehensive 15-question quiz...")
+        print("\nGenerating quiz ONLY from weak topics...")
+
+        for note in state["study_notes"]:
+
+            if note["topic"] in state["weak_topics"]:
+
+                combined_notes += (
+                    f"\n\n### {note['topic']}\n"
+                    f"{note['notes']}"
+                )
+
+    # ---------------------------------------
+    # Normal Quiz
+    # ---------------------------------------
+
+    else:
+
+        print("\nGenerating quiz from all study notes...")
+
+        for note in state["study_notes"]:
+
+            combined_notes += (
+                f"\n\n### {note['topic']}\n"
+                f"{note['notes']}"
+            )
 
     state["quiz_questions"] = quiz_generator(combined_notes)
 

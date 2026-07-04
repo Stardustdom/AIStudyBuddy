@@ -1,31 +1,37 @@
 import streamlit as st
 
 from day9_pipeline.graph import graph
+from day9_pipeline.intent_router import detect_intent
+from day9_pipeline.context_agent import (
+    answer_from_context,
+    stream_answer_from_context
+)
+
 from memory.chat_history import ChatHistory
 
 history = ChatHistory()
 
 
 # ==========================================
-# Helpers: Safe Init
+# Helpers
 # ==========================================
 
 def init_state():
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
 
-    if "workspace" not in st.session_state:
-        st.session_state.workspace = []
+    defaults = {
+        "messages": [],
+        "workspace": [],
+        "current_chat": "default_chat",
+        "selected_workspace": None
+    }
 
-    if "current_chat" not in st.session_state:
-        st.session_state.current_chat = "default_chat"
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-
-# ==========================================
-# Save Current Chat
-# ==========================================
 
 def save_chat():
+
     history.save_state(
         st.session_state.current_chat,
         {
@@ -35,20 +41,25 @@ def save_chat():
     )
 
 
-# ==========================================
-# Study Intent Detector (Improved)
-# ==========================================
+def assistant_reply(text):
 
-def is_study_request(prompt: str) -> bool:
-    prompt = prompt.lower()
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": text
+        }
+    )
 
-    study_keywords = [
-        "study", "learn", "notes", "roadmap",
-        "topic", "quiz", "teach", "explain",
-        "summarize", "summary", "understand"
-    ]
+    history.add_message(
+        st.session_state.current_chat,
+        "assistant",
+        text
+    )
 
-    return any(k in prompt for k in study_keywords)
+    with st.chat_message("assistant"):
+        st.markdown(text)
+
+    save_chat()
 
 
 # ==========================================
@@ -59,105 +70,225 @@ def render_chat():
 
     init_state()
 
-    # ----------------------------
-    # Render old messages
-    # ----------------------------
+    # -------------------------
+    # Old Messages
+    # -------------------------
+
     for msg in st.session_state.messages:
+
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # ----------------------------
-    # Input
-    # ----------------------------
+    # -------------------------
+    # Chat Input
+    # -------------------------
+
     prompt = st.chat_input("Ask anything...")
 
     if not prompt:
         return
 
-    # ----------------------------
-    # Store user message
-    # ----------------------------
-    user_msg = {"role": "user", "content": prompt}
-
-    st.session_state.messages.append(user_msg)
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": prompt
+        }
+    )
 
     history.add_message(
         st.session_state.current_chat,
         "user",
         prompt
     )
+    # Rename only if still "New Chat"
+    all_chats = history.get_all_chats()
+
+    if (
+        all_chats[st.session_state.current_chat]["title"]
+        == "New Chat"
+    ):
+        history.auto_title(
+            st.session_state.current_chat,
+            prompt
+        )
 
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # ============================
-    # NORMAL CHAT FLOW
-    # ============================
-    if not is_study_request(prompt):
+    # =========================
+    # Detect Intent
+    # =========================
 
-        reply = (
-            "👋 I can help you with study-related tasks like:\n\n"
-            "- Notes\n- Quizzes\n- Explanations\n- Roadmaps"
-        )
+    with st.spinner("Thinking..."):
+        intent = detect_intent(prompt)
 
-        assistant_msg = {"role": "assistant", "content": reply}
+# ------------------------------------------
+# Follow-up detection
+# ------------------------------------------
 
-        st.session_state.messages.append(assistant_msg)
+    FOLLOW_UP_WORDS = [
+        "example",
+        "examples",
+        "syntax",
+        "code",
+        "program",
+        "sample",
+        "summary",
+        "summarize",
+        "advantages",
+        "disadvantages",
+        "uses",
+        "applications",
+        "important points",
+        "points",
+        "definition",
+        "diagram",
+        "flowchart",
+        "difference",
+        "explain again",
+        "more",
+        "why",
+        "how"
+    ]
 
-        history.add_message(
-            st.session_state.current_chat,
-            "assistant",
-            reply
-        )
+    if (
+        intent == "GENERAL_CHAT"
+        and len(st.session_state.workspace) > 0
+    ):
+        lower = prompt.lower().strip()
+
+        if (
+            lower in FOLLOW_UP_WORDS
+            or len(lower.split()) <= 3
+        ):
+            intent = "CONTEXT_QA"
+
+    print("Intent:", intent)
+
+    # =====================================================
+    # NEW STUDY
+    # =====================================================
+
+    if intent == "NEW_STUDY":
 
         with st.chat_message("assistant"):
-            st.markdown(reply)
+
+            with st.spinner("Creating study plan..."):
+
+                result = graph.invoke(
+                    {
+                        "topic": prompt,
+                        "subtopics": [],
+                        "study_notes": [],
+                        "quiz_questions": [],
+                        "user_answers": [],
+                        "quiz_score": None,
+                        "weak_topics": [],
+                        "retry_count": 0,
+                        "analysis": "",
+                        "suggestions": ""
+                    }
+                )
+
+        st.session_state.workspace.append(result)
 
         save_chat()
-        return   # IMPORTANT: stop here (no rerun spam)
 
-    # ============================
-    # STUDY FLOW
-    # ============================
-    with st.chat_message("assistant"):
-        with st.spinner("Generating study material..."):
+        assistant_reply(
+            f"✅ Study material for **{prompt}** is ready."
+        )
 
-            result = graph.invoke({
-                "topic": prompt,
-                "subtopics": [],
-                "study_notes": [],
-                "quiz_questions": [],
-                "user_answers": [],
-                "quiz_score": None,
-                "weak_topics": [],
-                "retry_count": 0,
-                "analysis": "",
-                "suggestions": ""
-            })
+        st.rerun()
 
-    # ----------------------------
-    # Save workspace safely
-    # ----------------------------
-    st.session_state.workspace.append(result)
+    # =====================================================
+    # CONTEXT QUESTIONS
+    # =====================================================
 
-    reply = (
-        f"✅ Study material for **{prompt}** is ready.\n\n"
-        "Open your workspace to view it."
-    )
+    elif intent == "CONTEXT_QA":
 
-    assistant_msg = {"role": "assistant", "content": reply}
+        if len(st.session_state.workspace) == 0:
 
-    st.session_state.messages.append(assistant_msg)
+            assistant_reply(
+                "You don't have any study material yet.\n\nStart by asking me to teach a topic."
+            )
 
-    history.add_message(
-        st.session_state.current_chat,
-        "assistant",
-        reply
-    )
+            return
 
-    with st.chat_message("assistant"):
-        st.markdown(reply)
+        idx = st.session_state.selected_workspace
 
-    save_chat()
+        if idx is None:
+            idx = len(st.session_state.workspace) - 1
 
-    # ❌ IMPORTANT: removed st.rerun()
+        notes = st.session_state.workspace[idx]["study_notes"]
+
+        with st.spinner("Reading your notes..."):
+
+            placeholder = st.empty()
+
+            full_response = ""
+
+            for chunk in stream_answer_from_context(
+                prompt,
+                notes
+            ):
+
+                full_response += chunk
+
+                placeholder.markdown(full_response + "▌")
+
+            placeholder.markdown(full_response)
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": full_response
+                }
+            )
+
+            history.add_message(
+                st.session_state.current_chat,
+                "assistant",
+                full_response
+            )
+
+            save_chat()
+
+        return
+
+    # =====================================================
+    # QUIZ
+    # =====================================================
+
+    elif intent == "QUIZ":
+
+        if len(st.session_state.workspace) == 0:
+
+            assistant_reply(
+                "Study a topic first before generating a quiz."
+            )
+
+            return
+
+        idx = st.session_state.selected_workspace
+
+        if idx is None:
+            idx = len(st.session_state.workspace) - 1
+
+        st.session_state.selected_workspace = idx
+
+        assistant_reply(
+            "📚 Opening quiz..."
+        )
+
+        st.rerun()
+
+    # =====================================================
+    # GENERAL CHAT
+    # =====================================================
+
+    else:
+
+        assistant_reply(
+            "👋 I'm your AI Study Buddy.\n\n"
+            "I can help you learn new topics, explain concepts, summarize notes, and generate quizzes."
+        )

@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
-import sys
 import os
+import sys
 
 # -------------------------------------------------------
 # Project Path
@@ -13,10 +13,7 @@ PROJECT_ROOT = os.path.abspath(
 sys.path.append(PROJECT_ROOT)
 
 from state import AgentState
-from nodes import (
-    researcher_node,
-    quiz_node
-)
+from nodes import quiz_node
 
 # -------------------------------------------------------
 # Build Graph
@@ -29,11 +26,6 @@ builder = StateGraph(AgentState)
 # -------------------------------------------------------
 
 builder.add_node(
-    "researcher",
-    researcher_node
-)
-
-builder.add_node(
     "quiz",
     quiz_node
 )
@@ -42,16 +34,11 @@ builder.add_node(
 # Entry Point
 # -------------------------------------------------------
 
-builder.set_entry_point("researcher")
+builder.set_entry_point("quiz")
 
 # -------------------------------------------------------
 # Flow
 # -------------------------------------------------------
-
-builder.add_edge(
-    "researcher",
-    "quiz"
-)
 
 builder.add_edge(
     "quiz",

@@ -53,11 +53,15 @@ class ChatHistory:
 
         chat_id = str(uuid.uuid4())
 
+        now = datetime.now().isoformat()
+
         data[chat_id] = {
 
             "title": title,
 
-            "created_at": datetime.now().isoformat(),
+            "created_at": now,
+
+            "last_modified": now,
 
             "messages": [],
 
@@ -71,7 +75,20 @@ class ChatHistory:
 
     def get_all_chats(self):
 
-        return self._load()
+        data = self._load()
+
+        sorted_chats = dict(
+            sorted(
+                data.items(),
+                key=lambda x: x[1].get(
+                   "last_modified",
+                   x[1].get("created_at", "")
+                ),
+                reverse=True
+            )
+        )
+
+        return sorted_chats
 
     def rename_chat(self, chat_id, title):
 
@@ -80,6 +97,7 @@ class ChatHistory:
         if chat_id in data:
 
             data[chat_id]["title"] = title
+            data[chat_id]["last_modified"] = datetime.now().isoformat()
 
             self._save(data)
 
@@ -110,6 +128,7 @@ class ChatHistory:
             "time": datetime.now().isoformat()
 
         })
+        data[chat_id]["last_modified"] = datetime.now().isoformat()
 
         self._save(data)
 
@@ -170,6 +189,7 @@ class ChatHistory:
         data = self._load()
 
         data[chat_id]["state"] = state
+        data[chat_id]["last_modified"] = datetime.now().isoformat()
 
         self._save(data)
 
@@ -181,3 +201,31 @@ class ChatHistory:
             return {}
 
         return data[chat_id].get("state", {})
+    
+    # def touch_chat(self, chat_id):
+
+    #     data = self._load()
+
+    #     if chat_id in data:
+
+    #         data[chat_id]["last_modified"] = datetime.now().isoformat()
+
+    #         self._save(data)
+    
+    def auto_title(self, chat_id, first_prompt):
+
+        data = self._load()
+
+        if chat_id not in data:
+            return
+
+        title = first_prompt.strip()
+
+        if len(title) > 35:
+            title = title[:35] + "..."
+
+        data[chat_id]["title"] = title
+        data[chat_id]["last_modified"] = datetime.now().isoformat()
+
+        self._save(data)
+
