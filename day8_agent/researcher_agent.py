@@ -1,54 +1,20 @@
-from langchain.tools import tool
-from tavily import TavilyClient
-from dotenv import load_dotenv
-from langchain_ollama import ChatOllama
+"""Researcher agent.
+
+Two modes:
+* grounded  - writes study notes strictly from the user's uploaded sources
+              (retrieved with BM25), the NotebookLM way.
+* web       - searches the web (Tavily) and writes notes; falls back to the
+              model's own knowledge if no search key is configured.
+"""
+from langchain_core.tools import tool
+
 from memory.long_term import LongTermMemory
-import os
-
-load_dotenv()
-
-client = TavilyClient(
-    api_key=os.getenv("TAVILY_API_KEY")
-)
-
-llm = ChatOllama(
-    model="mistral",
-    temperature=0.1
-)
+from studybuddy.llm import get_llm, setting
+from studybuddy.sources import retrieve, web_search
 
 ltm = LongTermMemory()
 
-
-@tool
-def researcher(subtopic: str) -> dict:
-    """
-    Search the web and generate structured study notes.
-    """
-
-    print(f"\n[SEARCHING WEB] {subtopic}")
-
-    try:
-
-        search_results = client.search(
-            query=subtopic,
-            max_results=5
-        )
-
-        content = "\n\n".join(
-            result["content"]
-            for result in search_results["results"]
-        )
-
-        prompt = f"""
-You are an expert teacher creating study notes.
-
-Topic:
-{subtopic}
-
-Web Content:
-{content}
-
-Write beginner-friendly notes with the following sections:
+NOTES_FORMAT = """Write beginner-friendly study notes with these sections:
 
 1. Introduction
 2. Key Concepts
@@ -56,25 +22,43 @@ Write beginner-friendly notes with the following sections:
 4. Example
 5. Summary
 
-Do NOT mention websites, URLs or tutorials.
-Return only study notes.
-"""
+Do NOT mention websites, URLs or tutorials. Return only the study notes in markdown."""
 
-        response = llm.invoke(prompt)
 
-        ltm.add_note(
-            topic=subtopic,
-            note=response.content
-        )
-
+def research_from_sources(subtopic: str, sources: list) -> dict:
+    """Grounded research: notes built only from the user's own documents."""
+    hits = retrieve(sources, subtopic, k=8)
+    if not hits:
         return {
             "topic": subtopic,
-            "notes": response.content
+            "notes": f"_No passage about **{subtopic}** was found in your sources._",
+            "grounded": True,
         }
+    ctx = "\n\n".join(f"(from {h['source']})\n{h['text']}" for h in hits)
+    prompt = (
+        f"You are an expert teacher. Using ONLY the source excerpts below, create study notes on:\n"
+        f"{subtopic}\n\nIf the excerpts do not cover something, leave it out - never invent facts.\n\n"
+        f"{NOTES_FORMAT}\n\nSOURCE EXCERPTS:\n{ctx}"
+    )
+    notes = get_llm(0.1).invoke(prompt).content
+    return {"topic": subtopic, "notes": notes, "grounded": True,
+            "from_sources": sorted({h["source"] for h in hits})}
 
+
+@tool
+def researcher(subtopic: str) -> dict:
+    """Search the web and generate structured study notes."""
+    try:
+        web = ""
+        if setting("TAVILY_API_KEY"):
+            results = web_search(subtopic, max_results=5)
+            web = "\n\n".join(r.get("content", "") for r in results)
+        prompt = f"You are an expert teacher creating study notes.\n\nTopic:\n{subtopic}\n\n"
+        if web:
+            prompt += f"Web Content:\n{web}\n\n"
+        prompt += NOTES_FORMAT
+        notes = get_llm(0.1).invoke(prompt).content
+        ltm.add_note(topic=subtopic, note=notes)
+        return {"topic": subtopic, "notes": notes}
     except Exception as e:
-
-        return {
-            "topic": subtopic,
-            "notes": f"Error: {e}"
-        }
+        return {"topic": subtopic, "notes": f"Error: {e}"}

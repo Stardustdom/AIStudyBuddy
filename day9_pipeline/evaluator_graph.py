@@ -12,8 +12,8 @@ PROJECT_ROOT = os.path.abspath(
 
 sys.path.append(PROJECT_ROOT)
 
-from state import AgentState
-from nodes import evaluator_node
+from day9_pipeline.state import AgentState
+from day9_pipeline.nodes import evaluator_node
 
 # -------------------------------------------------------
 # Build Graph

@@ -1,9 +1,6 @@
-from langchain_ollama import ChatOllama
+from studybuddy.llm import get_llm
 
-llm = ChatOllama(
-    model="mistral",
-    temperature=0
-)
+llm = get_llm(0)
 
 # =========================================================
 # Fast rule-based detection for obvious messages

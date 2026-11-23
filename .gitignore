@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+# runtime data / secrets
+.streamlit/secrets.toml
+data/notebooks/
+data/long_term_notes.json
+chroma_db/

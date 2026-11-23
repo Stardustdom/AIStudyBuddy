@@ -9,6 +9,10 @@ class AgentState(TypedDict):
 
     topic: str
 
+    # Uploaded / enabled notebook sources: [{id, name, text}]
+    # When present, planner + researcher are grounded in them.
+    sources: list
+
     # ----------------------------------------------------
     # Planner Output
     # ----------------------------------------------------

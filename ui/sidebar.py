@@ -1,208 +1,74 @@
+import json
+
 import streamlit as st
-from memory.chat_history import ChatHistory
 
-history = ChatHistory()
+from studybuddy import store
+from studybuddy.llm import status
 
 
-def render_sidebar():
+def _open(nb_id):
+    st.session_state.nb_id = nb_id
+    st.rerun()
 
+
+def render_sidebar(nb):
     with st.sidebar:
+        st.markdown("## 📚 AI Study Buddy")
+        st.caption("Notebooks grounded in *your* sources")
 
-        st.title("📚 AI Study Buddy")
+        if st.button("➕ New notebook", width="stretch", type="primary"):
+            fresh = store.new_notebook()
+            store.save(fresh)
+            _open(fresh["id"])
 
-        st.divider()
-
-        # ==========================================
-        # New Chat
-        # ==========================================
-
-        if st.button(
-            "➕ New Chat",
-            use_container_width=True
-        ):
-
-            chat_id = history.create_chat()
-
-            st.session_state.current_chat = chat_id
-            st.session_state.selected_workspace = None
-            st.session_state.loaded_chat = None
-
-            st.rerun()
+        st.markdown("###### Notebooks")
+        for item in store.list_notebooks():
+            active = item["id"] == nb["id"]
+            if st.button(
+                f"{'📖' if active else '📓'} {item['title'][:28]}",
+                key=f"nb_{item['id']}",
+                width="stretch",
+                type="primary" if active else "secondary",
+                help=f"{item['n_sources']} source(s)",
+            ) and not active:
+                _open(item["id"])
 
         st.divider()
 
-        # ==========================================
-        # Search
-        # ==========================================
-
-        search = st.text_input(
-            "🔍 Search Chats",
-            placeholder="Search..."
-        )
-
-        chats = history.get_all_chats()
-
-        if search:
-
-            chats = {
-                cid: chat
-                for cid, chat in chats.items()
-                if search.lower() in chat["title"].lower()
-            }
-
-        st.markdown("### 💬 Chats")
-
-        # ==========================================
-        # Chat List
-        # ==========================================
-
-        for chat_id, chat in chats.items():
-
-            with st.container(border=True):
-
-                if st.button(
-                    chat["title"],
-                    key=f"open_{chat_id}",
-                    use_container_width=True
-                ):
-
-                    st.session_state.current_chat = chat_id
-                    st.session_state.selected_workspace = None
-                    st.session_state.loaded_chat = None
-                    st.rerun()
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-
-                    if st.button(
-                        "✏ Rename",
-                        key=f"rename_{chat_id}",
-                        use_container_width=True
-                    ):
-
-                        st.session_state.rename_chat = chat_id
-
-                with c2:
-
-                    if st.button(
-                        "🗑 Delete",
-                        key=f"delete_{chat_id}",
-                        use_container_width=True
-                    ):
-
-                        history.delete_chat(chat_id)
-
-                        if (
-                            "rename_chat" in st.session_state
-                            and st.session_state.rename_chat == chat_id
-                        ):
-                            del st.session_state["rename_chat"]
-
-                        chats_after = history.get_all_chats()
-
-                        if st.session_state.current_chat == chat_id:
-
-                            if chats_after:
-
-                                st.session_state.current_chat = next(
-                                    iter(chats_after)
-                                )
-
-                            else:
-
-                                st.session_state.current_chat = history.create_chat()
-
-                            st.session_state.messages = []
-                            st.session_state.workspace = []
-                            st.session_state.selected_workspace = None
-                            st.session_state.loaded_chat = None
-
-                        st.rerun()
-
-        # ==========================================
-        # Rename
-        # ==========================================
-
-        if "rename_chat" in st.session_state:
-
-            st.divider()
-
-            cid = st.session_state.rename_chat
-
-            chats = history.get_all_chats()
-
-            if cid not in chats:
-
-                del st.session_state["rename_chat"]
+        with st.expander("⚙️ Current notebook"):
+            new_title = st.text_input("Title", value=nb["title"], key=f"title_{nb['id']}")
+            if new_title.strip() and new_title.strip() != nb["title"]:
+                nb["title"] = new_title.strip()
+                store.save(nb)
+                st.rerun()
+            st.download_button(
+                "⬇ Export (Markdown)", store.export_markdown(nb), f"{nb['title']}.md", width="stretch"
+            )
+            st.download_button(
+                "💾 Backup (JSON)", json.dumps(nb, ensure_ascii=False), f"{nb['title']}.json",
+                width="stretch", help="Hosted apps can reset their disk - keep a backup.",
+            )
+            if st.button("🗑 Delete notebook", width="stretch"):
+                store.delete(nb["id"])
+                st.session_state.pop("nb_id", None)
                 st.rerun()
 
-            st.markdown("### ✏ Rename Chat")
+        with st.expander("📥 Restore backup"):
+            up = st.file_uploader("Notebook .json", type=["json"], key="restore_up")
+            if up and st.button("Restore", width="stretch"):
+                try:
+                    _open(store.import_json(up.getvalue())["id"])
+                except Exception as e:
+                    st.error(f"Not a valid backup: {e}")
 
-            new_title = st.text_input(
-                "Title",
-                value=chats[cid]["title"],
-                key="rename_input"
+        with st.expander("🔑 Model & API keys"):
+            st.caption(f"Active: **{status()}**")
+            st.selectbox(
+                "Provider", ["auto", "gemini", "groq", "openai", "ollama"], key="cfg_LLM_PROVIDER",
+                help="auto = first key found, otherwise local Ollama",
             )
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-
-                if st.button(
-                    "Save",
-                    use_container_width=True
-                ):
-
-                    if new_title.strip():
-
-                        history.rename_chat(
-                            cid,
-                            new_title.strip()
-                        )
-
-                    del st.session_state["rename_chat"]
-
-                    st.rerun()
-
-            with c2:
-
-                if st.button(
-                    "Cancel",
-                    use_container_width=True
-                ):
-
-                    del st.session_state["rename_chat"]
-
-                    st.rerun()
-
-        # ==========================================
-        # Workspace
-        # ==========================================
-
-        st.divider()
-
-        st.markdown("### 📚 Study Workspace")
-
-        if not st.session_state.workspace:
-
-            st.caption("No study topics yet.")
-
-        else:
-
-            for idx, item in enumerate(st.session_state.workspace):
-
-                topic = item.get(
-                    "topic",
-                    f"Topic {idx+1}"
-                )
-
-                if st.button(
-                    f"📘 {topic}",
-                    key=f"workspace_{idx}",
-                    use_container_width=True
-                ):
-
-                    st.session_state.selected_workspace = idx
-
-                    st.rerun()
+            st.text_input("Gemini API key", type="password", key="cfg_GEMINI_API_KEY",
+                          help="Free at aistudio.google.com")
+            st.text_input("Groq API key", type="password", key="cfg_GROQ_API_KEY", help="Free at console.groq.com")
+            st.text_input("Tavily key (web discovery)", type="password", key="cfg_TAVILY_API_KEY")
+            st.caption("Keys stay in this browser session only. For a permanent setup use Streamlit secrets.")

@@ -1,294 +1,135 @@
+import re
+
 import streamlit as st
 
-from day9_pipeline.graph import graph
-from day9_pipeline.intent_router import detect_intent
-from day9_pipeline.context_agent import (
-    answer_from_context,
-    stream_answer_from_context
-)
-
-from memory.chat_history import ChatHistory
-
-history = ChatHistory()
+from day9_pipeline.intent_router import QUIZ_KEYWORDS, NEW_STUDY_KEYWORDS, GENERAL_CHAT
+from studybuddy import store
+from studybuddy.studio import ask, enabled_sources, suggest_questions
+from ui.study_page import build_study_track
 
 
-# ==========================================
-# Helpers
-# ==========================================
+def route(prompt: str, has_sources: bool) -> str:
+    """Intent routing. With sources, a question is grounded Q&A by default (NotebookLM behaviour)."""
+    text = prompt.strip().lower()
+    if text in GENERAL_CHAT:
+        return "GENERAL_CHAT"
+    if any(k in text for k in QUIZ_KEYWORDS):
+        return "QUIZ"
+    if any(text.startswith(k) for k in NEW_STUDY_KEYWORDS) and re.search(r"plan|path|roadmap|teach|notes|course", text):
+        return "NEW_STUDY"
+    if has_sources:
+        return "CONTEXT_QA"
+    from day9_pipeline.intent_router import detect_intent
 
-def init_state():
-
-    defaults = {
-        "messages": [],
-        "workspace": [],
-        "current_chat": "default_chat",
-        "selected_workspace": None
-    }
-
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    return detect_intent(prompt)
 
 
-def save_chat():
-
-    history.save_state(
-        st.session_state.current_chat,
-        {
-            "messages": st.session_state.messages,
-            "workspace": st.session_state.workspace
-        }
-    )
+def _citations(cites):
+    if not cites:
+        return
+    with st.expander(f"📎 {len(cites)} source excerpt(s)"):
+        for c in cites:
+            st.markdown(f"**[{c['n']}] {c['source']}**")
+            st.caption(c["text"][:600] + ("…" if len(c["text"]) > 600 else ""))
 
 
-def assistant_reply(text):
-
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": text
-        }
-    )
-
-    history.add_message(
-        st.session_state.current_chat,
-        "assistant",
-        text
-    )
-
-    with st.chat_message("assistant"):
-        st.markdown(text)
-
-    save_chat()
+def _save_note(nb, content):
+    title = re.sub(r"[#*_`>\[\]]", "", content).strip().split("\n")[0][:50] or "Note"
+    nb["notes"].append({"title": title, "content": content})
+    store.save(nb)
+    st.toast("Saved to Notes 📌")
 
 
-# ==========================================
-# Render Chat
-# ==========================================
+def render_chat(nb):
+    srcs = enabled_sources(nb)
 
-def render_chat():
+    # ------------------------------------------------------------ history
+    for i, m in enumerate(nb["messages"]):
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+            if m["role"] == "assistant":
+                _citations(m.get("citations"))
+                if m.get("savable", True) and st.button("📌 Save to notes", key=f"save_{nb['id']}_{i}"):
+                    _save_note(nb, m["content"])
 
-    init_state()
+    # --------------------------------------------------------- empty state
+    if not nb["messages"]:
+        if not srcs:
+            st.markdown(
+                "#### Start by adding a source\n"
+                "Upload a PDF or Word file, add a website or paste text in the **Sources** panel on the left. "
+                "I'll answer questions with citations from them, and you can turn them into study guides, "
+                "flashcards, quizzes, mind maps and audio overviews in the **Studio**.\n\n"
+                "No documents? Ask me to *teach you a topic* and I'll build a study path from the web."
+            )
+        else:
+            st.markdown(f"#### Ask about your {len(srcs)} source(s)")
+            key = f"sugg_{nb['id']}"
+            if key not in st.session_state:
+                if st.button("💡 Suggest questions", width="stretch"):
+                    with st.spinner("Reading your sources…"):
+                        try:
+                            st.session_state[key] = suggest_questions(nb)
+                        except Exception as e:
+                            st.error(str(e))
+                    st.rerun()
+            else:
+                for j, q in enumerate(st.session_state[key]):
+                    if st.button(q, key=f"sq_{j}", width="stretch"):
+                        st.session_state.pending_prompt = q
+                        st.rerun()
 
-    # -------------------------
-    # Old Messages
-    # -------------------------
-
-    for msg in st.session_state.messages:
-
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # -------------------------
-    # Chat Input
-    # -------------------------
-
-    prompt = st.chat_input("Ask anything...")
-
+    prompt = st.chat_input("Ask about your sources…" if srcs else "Add a source, or ask me to teach a topic…")
+    prompt = prompt or st.session_state.pop("pending_prompt", None)
     if not prompt:
         return
 
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": prompt
-        }
-    )
-
-    history.add_message(
-        st.session_state.current_chat,
-        "user",
-        prompt
-    )
-    # Rename only if still "New Chat"
-    all_chats = history.get_all_chats()
-
-    if (
-        all_chats[st.session_state.current_chat]["title"]
-        == "New Chat"
-    ):
-        history.auto_title(
-            st.session_state.current_chat,
-            prompt
-        )
-
+    nb["messages"].append({"role": "user", "content": prompt})
+    if nb["title"] == "Untitled notebook":
+        nb["title"] = prompt[:40]
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # =========================
-    # Detect Intent
-    # =========================
+    intent = route(prompt, bool(srcs))
 
-    with st.spinner("Thinking..."):
-        intent = detect_intent(prompt)
-
-# ------------------------------------------
-# Follow-up detection
-# ------------------------------------------
-
-    FOLLOW_UP_WORDS = [
-        "example",
-        "examples",
-        "syntax",
-        "code",
-        "program",
-        "sample",
-        "summary",
-        "summarize",
-        "advantages",
-        "disadvantages",
-        "uses",
-        "applications",
-        "important points",
-        "points",
-        "definition",
-        "diagram",
-        "flowchart",
-        "difference",
-        "explain again",
-        "more",
-        "why",
-        "how"
-    ]
-
-    if (
-        intent == "GENERAL_CHAT"
-        and len(st.session_state.workspace) > 0
-    ):
-        lower = prompt.lower().strip()
-
-        if (
-            lower in FOLLOW_UP_WORDS
-            or len(lower.split()) <= 3
-        ):
-            intent = "CONTEXT_QA"
-
-    print("Intent:", intent)
-
-    # =====================================================
-    # NEW STUDY
-    # =====================================================
-
-    if intent == "NEW_STUDY":
-
-        with st.chat_message("assistant"):
-
-            with st.spinner("Creating study plan..."):
-
-                result = graph.invoke(
-                    {
-                        "topic": prompt,
-                        "subtopics": [],
-                        "study_notes": [],
-                        "quiz_questions": [],
-                        "user_answers": [],
-                        "quiz_score": None,
-                        "weak_topics": [],
-                        "retry_count": 0,
-                        "analysis": "",
-                        "suggestions": ""
-                    }
+    with st.chat_message("assistant"):
+        cites, savable = None, True
+        try:
+            if intent == "CONTEXT_QA":
+                stream, cites = ask(nb, prompt)
+                reply = st.write_stream(c for c in stream)
+                _citations(cites)
+            elif intent == "NEW_STUDY":
+                with st.spinner("Planner → Researcher agents are building your study path…"):
+                    build_study_track(nb, prompt)
+                reply = (
+                    f"✅ Study path for **{prompt}** is ready"
+                    f"{' from your sources' if srcs else ''}. Open the **🎓 Study path** tab — "
+                    "then take the quiz in **🧠 Quiz**."
                 )
+                st.markdown(reply)
+                savable = False
+            elif intent == "QUIZ":
+                if nb["study"]:
+                    reply = "Open the **🧠 Quiz** tab to take or generate a quiz."
+                else:
+                    reply = ("Quizzes are built from a study path. Click **Build study path** in the "
+                             "**🎓 Study path** tab first (it uses your sources).")
+                st.markdown(reply)
+                savable = False
+            else:
+                reply = ("👋 I'm your Study Buddy. Add sources on the left and ask me anything about them — "
+                         "or open the Studio to generate a study guide, flashcards, quiz, mind map or audio overview.")
+                st.markdown(reply)
+                savable = False
+        except Exception as e:
+            reply = f"⚠️ {e}"
+            st.error(reply)
+            savable = False
 
-        st.session_state.workspace.append(result)
-
-        save_chat()
-
-        assistant_reply(
-            f"✅ Study material for **{prompt}** is ready."
-        )
-
-        st.rerun()
-
-    # =====================================================
-    # CONTEXT QUESTIONS
-    # =====================================================
-
-    elif intent == "CONTEXT_QA":
-
-        if len(st.session_state.workspace) == 0:
-
-            assistant_reply(
-                "You don't have any study material yet.\n\nStart by asking me to teach a topic."
-            )
-
-            return
-
-        idx = st.session_state.selected_workspace
-
-        if idx is None:
-            idx = len(st.session_state.workspace) - 1
-
-        notes = st.session_state.workspace[idx]["study_notes"]
-
-        with st.spinner("Reading your notes..."):
-
-            placeholder = st.empty()
-
-            full_response = ""
-
-            for chunk in stream_answer_from_context(
-                prompt,
-                notes
-            ):
-
-                full_response += chunk
-
-                placeholder.markdown(full_response + "▌")
-
-            placeholder.markdown(full_response)
-
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": full_response
-                }
-            )
-
-            history.add_message(
-                st.session_state.current_chat,
-                "assistant",
-                full_response
-            )
-
-            save_chat()
-
-        return
-
-    # =====================================================
-    # QUIZ
-    # =====================================================
-
-    elif intent == "QUIZ":
-
-        if len(st.session_state.workspace) == 0:
-
-            assistant_reply(
-                "Study a topic first before generating a quiz."
-            )
-
-            return
-
-        idx = st.session_state.selected_workspace
-
-        if idx is None:
-            idx = len(st.session_state.workspace) - 1
-
-        st.session_state.selected_workspace = idx
-
-        assistant_reply(
-            "📚 Opening quiz..."
-        )
-
-        st.rerun()
-
-    # =====================================================
-    # GENERAL CHAT
-    # =====================================================
-
-    else:
-
-        assistant_reply(
-            "👋 I'm your AI Study Buddy.\n\n"
-            "I can help you learn new topics, explain concepts, summarize notes, and generate quizzes."
-        )
+    msg = {"role": "assistant", "content": reply, "savable": savable}
+    if cites:
+        msg["citations"] = cites
+    nb["messages"].append(msg)
+    store.save(nb)
+    st.rerun()

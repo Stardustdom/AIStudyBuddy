@@ -1,6 +1,6 @@
 import json
 
-from langchain_ollama import ChatOllama
+from studybuddy.llm import get_llm
 import os
 
 def save_plan(plan):
@@ -26,10 +26,7 @@ def save_plan(plan):
     print(f"\nPlan saved to {filename}")
 
 
-llm = ChatOllama(
-    model="mistral",
-    temperature=0.1
-)
+llm = get_llm(0.1)
 
 
 SYSTEM_PROMPT = """
@@ -103,9 +100,16 @@ Output:
     ]
 }
 """
-def generate_plan(topic: str):
+def generate_plan(topic: str, context: str = ""):
+    """context: optional excerpt of the user's sources - the plan then follows their material."""
 
     prompt = f"Topic: {topic}"
+
+    if context:
+        prompt += (
+            "\n\nBuild the 5-stage plan from the following study material "
+            "(use its actual contents and order):\n\n" + context[:6000]
+        )
 
     plan = None
 
@@ -125,7 +129,10 @@ def generate_plan(topic: str):
         )
 
         try:
-            plan = json.loads(response.content)
+            text = response.content.replace("```json", "").replace("```", "")
+            plan = json.loads(text[text.find("{"):text.rfind("}") + 1])
+            if not plan.get("subtopics"):
+                raise json.JSONDecodeError("no subtopics", text, 0)
             return plan
 
         except json.JSONDecodeError:

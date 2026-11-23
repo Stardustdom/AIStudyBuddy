@@ -1,88 +1,44 @@
-import hashlib
-import chromadb
-from chromadb.utils.embedding_functions import (
-    SentenceTransformerEmbeddingFunction
-)
+"""Long-term memory: cache of researched study notes.
 
-embedding_function = SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
-)
+Same interface as the old ChromaDB version (add_note / get_note / search) but
+stored as JSON and searched with BM25, so there is no embedding model or vector
+DB to install - which keeps the app deployable on Streamlit Community Cloud.
+"""
+import json
+import os
 
-client = chromadb.PersistentClient(
-    path="./chroma_db"
-)
+from studybuddy.sources import retrieve
 
-collection = client.get_or_create_collection(
-    name="study_notes",
-    embedding_function=embedding_function
+_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "long_term_notes.json"
 )
 
 
 class LongTermMemory:
-
-    # ==========================================
-    # Save
-    # ==========================================
+    def _load(self) -> dict:
+        try:
+            with open(_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
 
     def add_note(self, topic, note):
-
-        doc_id = hashlib.sha256(
-            topic.encode()
-        ).hexdigest()
-
-        try:
-            collection.delete(ids=[doc_id])
-        except:
-            pass
-
-        collection.add(
-
-            ids=[doc_id],
-
-            documents=[note],
-
-            metadatas=[
-                {
-                    "topic": topic
-                }
-            ]
-
-        )
-
-    # ==========================================
-    # Exact lookup
-    # ==========================================
+        data = self._load()
+        data[topic] = note
+        os.makedirs(os.path.dirname(_FILE), exist_ok=True)
+        with open(_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
 
     def get_note(self, topic):
-
-        return collection.get(
-
-            where={
-                "topic": topic
-            }
-
-        )
-
-    # ==========================================
-    # Semantic Search ⭐
-    # ==========================================
+        """Exact lookup. Shape matches chroma's get(): {'documents': [...]}"""
+        note = self._load().get(topic)
+        return {"documents": [note] if note else []}
 
     def search(self, query, k=3):
-
-        results = collection.query(
-
-            query_texts=[query],
-
-            n_results=k
-
-        )
-
-        return results
-
-    # ==========================================
-    # Count
-    # ==========================================
+        """BM25 search over cached notes. Shape matches chroma's query(): {'documents': [[...]]}"""
+        pseudo = [{"id": t, "name": t, "text": n} for t, n in self._load().items()]
+        hits = retrieve(pseudo, query, k=k)
+        return {"documents": [[h["text"] for h in hits]]}
 
     def count(self):
-
-        return collection.count()
+        return len(self._load())

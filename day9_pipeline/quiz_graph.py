@@ -8,8 +8,8 @@ PROJECT_ROOT = os.path.abspath(
 
 sys.path.append(PROJECT_ROOT)
 
-from state import AgentState
-from nodes import quiz_node
+from day9_pipeline.state import AgentState
+from day9_pipeline.nodes import quiz_node
 
 builder = StateGraph(AgentState)
 

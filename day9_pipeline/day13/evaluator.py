@@ -1,7 +1,7 @@
 import sys
 import os
 
-from langchain_ollama import ChatOllama
+from studybuddy.llm import get_llm
 
 PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")
@@ -9,13 +9,10 @@ PROJECT_ROOT = os.path.abspath(
 
 sys.path.append(PROJECT_ROOT)
 
-from state import AgentState
+from day9_pipeline.state import AgentState
 
 
-llm = ChatOllama(
-    model="mistral",
-    temperature=0.2
-)
+llm = get_llm(0.2)
 
 
 def evaluator(state: AgentState):

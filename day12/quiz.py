@@ -1,14 +1,11 @@
 import json
 import re
 from dotenv import load_dotenv
-from langchain_ollama import ChatOllama
+from studybuddy.llm import get_llm
 
 load_dotenv()
 
-llm = ChatOllama(
-    model="mistral",
-    temperature=0
-)
+llm = get_llm(0)
 
 
 def clean_json(text: str):
