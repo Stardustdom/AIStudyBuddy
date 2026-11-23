@@ -104,17 +104,45 @@ class LLM:
 
     def stream(self, x):
         messages = _normalize(x)
+        import time
+
+        chain = [self.provider]
+        if self.provider != "groq" and setting("GROQ_API_KEY"):
+            chain.append("groq")  # automatic fallback when the main provider is overloaded
+        last = None
+        for prov in chain:
+            self._use(prov)
+            for attempt in range(4 if prov == chain[0] else 2):
+                started = False
+                try:
+                    for piece in self._dispatch(prov)(messages):
+                        if piece:
+                            started = True
+                            yield Msg(piece)
+                    return
+                except Exception as e:
+                    last = e
+                    transient = any(t in str(e) for t in ("503", "429", "UNAVAILABLE", "overloaded", "RESOURCE_EXHAUSTED"))
+                    if started or not transient:
+                        raise
+                    time.sleep(min(2 ** attempt * 1.5, 8))
+        raise RuntimeError(f"The model is busy right now - please try again in a minute. ({last})")
+
+    def _use(self, prov):
+        self.active = prov
+        self.model = model_name(prov)
+
+    def _dispatch(self, prov):
+        self.provider_in_use = prov
         fn = {
             "gemini": self._gemini,
             "groq": self._openai_like,
             "openai": self._openai_like,
             "ollama": self._ollama,
-        }.get(self.provider)
+        }.get(prov)
         if fn is None:
-            raise RuntimeError(f"Unknown LLM_PROVIDER '{self.provider}'")
-        for piece in fn(messages):
-            if piece:
-                yield Msg(piece)
+            raise RuntimeError(f"Unknown LLM_PROVIDER '{prov}'")
+        return fn
 
     # --------------------------------------------------------------- providers
     def _gemini(self, messages):
@@ -141,7 +169,7 @@ class LLM:
     def _openai_like(self, messages):
         from openai import OpenAI
 
-        if self.provider == "groq":
+        if self.provider_in_use == "groq":
             client = OpenAI(api_key=setting("GROQ_API_KEY"), base_url="https://api.groq.com/openai/v1")
         else:
             client = OpenAI(api_key=setting("OPENAI_API_KEY"), base_url=setting("OPENAI_BASE_URL") or None)
