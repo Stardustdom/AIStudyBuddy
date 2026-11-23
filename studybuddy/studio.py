@@ -15,6 +15,11 @@ _BROAD = re.compile(
     r"(?<![a-z])(documents?|sources?|files?|pdfs?|material|overview|summar\w*|main (topic|idea|point)s?|"
     r"what.*(is|are) (this|these|it)|tell me (more|everything)|key (points|takeaways))(?![a-z])", re.I)
 
+_STYLE = {
+    "concise": "\n- Keep the answer short: at most 3 sentences or a few bullets.",
+    "detailed": "\n- Give a thorough, detailed answer with structure.",
+}
+
 NOT_FOUND = "I couldn't find that in your sources."
 
 QA_SYSTEM = """You are a research assistant that answers ONLY from the numbered source excerpts provided.
@@ -57,7 +62,7 @@ def _json_call(prompt: str, retries: int = 3):
 
 
 # ---------------------------------------------------------------------- Q&A
-def ask(nb: dict, question: str, k: int = 6):
+def ask(nb: dict, question: str, k: int = 6, style: str = "default"):
     """Returns (stream_generator, citations). Citations = [{n, source, text}]."""
     srcs = enabled_sources(nb)
     hits = retrieve(srcs, question, k=k)
@@ -77,7 +82,8 @@ def ask(nb: dict, question: str, k: int = 6):
         {"role": m["role"], "content": m["content"]}
         for m in nb["messages"][-7:-1]  # last turns, excluding the question just appended
     ]
-    msgs = [{"role": "system", "content": QA_SYSTEM}, *history,
+    system = QA_SYSTEM + _STYLE.get(style, "")
+    msgs = [{"role": "system", "content": system}, *history,
             {"role": "user", "content": f"Source excerpts:\n\n{ctx}\n\nQuestion: {question}"}]
 
     def gen():
@@ -119,7 +125,27 @@ _MD_PROMPTS = {
 }
 
 
+import contextvars  # noqa: E402
+
+_OPTS: contextvars.ContextVar = contextvars.ContextVar("studio_options", default=None)
+
+
+def _opt_text() -> str:
+    o = _OPTS.get() or {}
+    bits = []
+    if o.get("focus"):
+        bits.append("Focus especially on: " + str(o["focus"])[:300])
+    if o.get("length") == "short":
+        bits.append("Keep it brief.")
+    elif o.get("length") == "long":
+        bits.append("Be thorough and detailed.")
+    if o.get("language"):
+        bits.append("Write in " + str(o["language"])[:40] + ".")
+    return " ".join(bits)
+
+
 def _grounded(task: str, nb: dict) -> str:
+    task = (task + " " + _opt_text()).strip()
     ctx = digest(enabled_sources(nb))
     if not ctx:
         raise ValueError("Add and enable at least one source first.")
@@ -159,15 +185,16 @@ def make_audio(segments: list[dict]) -> bytes | None:
     return buf.getvalue()
 
 
-def generate(kind: str, nb: dict) -> dict:
-    """Run one Studio generator. Returns an output dict stored in nb['outputs'][kind]."""
+def generate(kind: str, nb: dict, options: dict | None = None) -> dict:
+    """Run one Studio generator. Optional options: focus, length (short|long), count, language."""
+    _OPTS.set(options or {})
     icon, title, _ = STUDIO[kind]
     if kind in _MD_PROMPTS:
         md = get_llm(0.3).invoke(_grounded(_MD_PROMPTS[kind], nb)).content
         return {"title": title, "kind": kind, "markdown": md}
     if kind == "flashcards":
         cards = _json_call(_grounded(
-            "Create 12 flashcards. Return ONLY a JSON array of objects like "
+            f"Create {int((options or {}).get('count') or 12)} flashcards. Return ONLY a JSON array of objects like "
             '{"front": "question or term", "back": "concise answer"}.', nb))
         return {"title": title, "kind": kind, "cards": [c for c in cards if "front" in c and "back" in c]}
     if kind == "mindmap":

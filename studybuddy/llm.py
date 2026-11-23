@@ -56,6 +56,22 @@ class Msg:
     content: str
 
 
+class Cancelled(BaseException):
+    """Raised inside a job when its cancel event is set. BaseException so agents'
+    broad `except Exception` handlers cannot swallow it."""
+
+
+import contextvars  # noqa: E402
+
+CANCEL_EVENT: contextvars.ContextVar = contextvars.ContextVar("cancel_event", default=None)
+
+
+def check_cancelled() -> None:
+    ev = CANCEL_EVENT.get()
+    if ev is not None and ev.is_set():
+        raise Cancelled()
+
+
 def _normalize(x) -> list[dict]:
     if isinstance(x, str):
         return [{"role": "user", "content": x}]
@@ -157,8 +173,11 @@ class LLM:
             self._use(prov)
             for attempt in range(4 if prov == chain[0] else 2):
                 started = False
+                check_cancelled()
+                inner = self._dispatch(prov)(messages)
                 try:
-                    for piece in self._dispatch(prov)(messages):
+                    for piece in inner:
+                        check_cancelled()
                         if piece:
                             started = True
                             yield Msg(piece)
@@ -176,6 +195,8 @@ class LLM:
                     if started or not transient:
                         raise
                     time.sleep(min(2 ** attempt * 1.5, 8))
+                finally:
+                    inner.close()  # drops the upstream HTTP stream on cancel / client disconnect
         raise RuntimeError(f"The model is busy right now - please try again in a minute. ({last})")
 
     def _use(self, prov):

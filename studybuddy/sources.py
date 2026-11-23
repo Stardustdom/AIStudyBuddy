@@ -103,6 +103,44 @@ def fetch_url(url: str) -> tuple[str, str]:
     return p.title.strip() or url, _clean("".join(p.parts))
 
 
+_YT = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})")
+
+
+def youtube_id(url: str):
+    m = _YT.search(url)
+    return m.group(1) if m else None
+
+
+def fetch_youtube(url: str) -> tuple[str, str]:
+    """Return (title, transcript) for a YouTube video. Raises if it has no transcript."""
+    import requests
+
+    vid = youtube_id(url)
+    if not vid:
+        raise ValueError("Not a valid YouTube link")
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+    except ImportError as e:
+        raise RuntimeError("youtube-transcript-api is not installed") from e
+    try:
+        if hasattr(YouTubeTranscriptApi, "get_transcript"):  # <1.0
+            parts = YouTubeTranscriptApi.get_transcript(vid)
+            text = " ".join(p["text"] for p in parts)
+        else:
+            fetched = YouTubeTranscriptApi().fetch(vid)
+            text = " ".join(sn.text for sn in fetched)
+    except Exception as e:
+        raise ValueError(f"No transcript available for this video ({type(e).__name__}).") from e
+    title = vid
+    try:
+        r = requests.get("https://www.youtube.com/oembed", params={"url": url, "format": "json"}, timeout=10)
+        if r.ok:
+            title = r.json().get("title", vid)
+    except Exception:
+        pass
+    return title, _clean(text)
+
+
 def web_search(query: str, max_results: int = 6) -> list[dict]:
     """Search the web through Tavily. Returns [{title,url,content}]. Needs TAVILY_API_KEY."""
     import requests

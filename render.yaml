@@ -1,0 +1,28 @@
+# Render Blueprint for the API. Streamlit app is unaffected.
+services:
+  - type: web
+    name: study-buddy-api
+    runtime: python
+    plan: starter            # a persistent disk needs a paid plan; free plan data resets on redeploy
+    buildCommand: pip install -r api/requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: STUDYBUDDY_DATA_DIR
+        value: /var/data
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
+      - key: CORS_ORIGIN_REGEX
+        value: https://.*\.vercel\.app
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+    disk:
+      name: studybuddy-data
+      mountPath: /var/data
+      sizeGB: 1

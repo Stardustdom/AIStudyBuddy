@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DIR = os.path.join(BASE, "data", "notebooks")
+DIR = os.path.join(os.getenv("STUDYBUDDY_DATA_DIR") or os.path.join(BASE, "data"), "notebooks")
 OLD_HISTORY = os.path.join(BASE, "memory", "chat_history.json")
 
 
