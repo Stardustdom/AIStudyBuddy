@@ -85,7 +85,7 @@ def provider_name() -> str:
 def model_name(provider: str | None = None) -> str:
     p = provider or provider_name()
     return {
-        "gemini": setting("GEMINI_MODEL", "gemini-2.5-flash"),
+        "gemini": setting("GEMINI_MODEL", "gemini-3.8-flash"),
         "groq": setting("GROQ_MODEL", "llama-3.3-70b-versatile"),
         "openai": setting("OPENAI_MODEL", "gpt-4o-mini"),
         "ollama": setting("OLLAMA_MODEL", "mistral"),
