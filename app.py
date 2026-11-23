@@ -4,6 +4,7 @@ from studybuddy import store
 from studybuddy.llm import status
 from ui.style import inject, topbar
 from ui.chat import render_chat
+from ui.home import render_home
 from ui.notes_view import render_notes
 from ui.quiz_view import render_quiz
 from ui.sidebar import render_sidebar
@@ -15,18 +16,21 @@ st.set_page_config(page_title="AI Study Buddy", page_icon="📚", layout="wide")
 
 inject()
 
-# ------------------------------------------------------------ current notebook
-nb = store.load(st.session_state.get("nb_id", "")) if st.session_state.get("nb_id") else None
-if nb is None:
-    existing = store.list_notebooks()
-    if existing:
-        nb = store.load(existing[0]["id"])
-    else:
-        nb = store.new_notebook()
-        store.save(nb)
-    st.session_state.nb_id = nb["id"]
+# ----------------------------------------------------------------- routing
+# Home page (notebook list) <-> notebook view. ?nb=<id> keeps the notebook open on refresh.
+if "nb_id" not in st.session_state and st.query_params.get("nb"):
+    st.session_state.nb_id = st.query_params["nb"]
+
+nb = store.load(st.session_state["nb_id"]) if st.session_state.get("nb_id") else None
+if st.session_state.get("nb_id") and nb is None:  # deleted / unknown id
+    st.session_state.pop("nb_id", None)
+    st.query_params.clear()
 
 render_sidebar(nb)
+
+if nb is None:
+    render_home()
+    st.stop()
 
 topbar(nb["title"], len(nb["sources"]), sum(1 for x in nb["sources"] if x.get("enabled", True)), status())
 
