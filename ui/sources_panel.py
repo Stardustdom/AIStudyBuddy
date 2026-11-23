@@ -2,9 +2,10 @@ import streamlit as st
 
 from studybuddy import store
 from studybuddy.studio import DEFAULT_TITLES, suggest_title
-from studybuddy.sources import extract_file, fetch_url, make_source, web_search
+from studybuddy.sources import extract_file, fetch_url, fetch_youtube, make_source, web_search, youtube_id
+from ui.jobs_ui import lock_hint
 
-ICON = {"pdf": "📕", "docx": "📘", "url": "🌐", "text": "📝", "web": "🔎"}
+ICON = {"pdf": "📕", "docx": "📘", "url": "🌐", "youtube": "▶️", "text": "📝", "web": "🔎"}
 
 
 def _add(nb, src):
@@ -14,8 +15,10 @@ def _add(nb, src):
     store.save(nb)
 
 
-def render_sources(nb):
+def render_sources(nb, locked=False):
     st.subheader("Sources")
+    if locked:
+        st.caption("🔒 Sources are locked while a generation is running. " + (lock_hint(nb) or ""))
 
     # ----------------------------------------------------------- upload
     n = st.session_state.get("uploader_n", 0)
@@ -25,6 +28,7 @@ def render_sources(nb):
         accept_multiple_files=True,
         key=f"uploader_{n}",
         help="PDF, Word, text, markdown or CSV. Added automatically.",
+        disabled=locked,
     )
     if files:
         added = 0
@@ -49,15 +53,16 @@ def render_sources(nb):
     t_url, t_text, t_web = st.tabs(["🌐 Website", "📝 Paste", "🔎 Discover"])
 
     with t_url:
-        url = st.text_input("Page or PDF URL", key="src_url", placeholder="https://…")
-        if st.button("Add website", width="stretch", disabled=not url):
+        url = st.text_input("Page, PDF or YouTube URL", key="src_url", placeholder="https://…")
+        if st.button("Add website", width="stretch", disabled=locked or not url):
             with st.spinner("Fetching…"):
                 try:
-                    title, text = fetch_url(url.strip())
+                    is_yt = bool(youtube_id(url))
+                    title, text = fetch_youtube(url.strip()) if is_yt else fetch_url(url.strip())
                     if len(text) < 200:
                         st.warning("That page has almost no readable text.")
                     else:
-                        _add(nb, make_source(title[:80], "url", text, url=url.strip()))
+                        _add(nb, make_source(title[:80], "youtube" if is_yt else "url", text, url=url.strip()))
                         st.rerun()
                 except Exception as e:
                     st.error(f"Couldn't fetch: {e}")
@@ -65,7 +70,7 @@ def render_sources(nb):
     with t_text:
         title = st.text_input("Title", key="src_ptitle", placeholder="My notes")
         body = st.text_area("Text", key="src_pbody", height=120, placeholder="Paste anything…")
-        if st.button("Add text", width="stretch", disabled=not body.strip()):
+        if st.button("Add text", width="stretch", disabled=locked or not body.strip()):
             _add(nb, make_source(title.strip() or "Pasted text", "text", body))
             st.session_state.src_pbody = ""
             st.session_state.src_ptitle = ""
@@ -83,7 +88,7 @@ def render_sources(nb):
             with st.container(border=True):
                 st.markdown(f"**{r.get('title', 'Result')[:70]}**")
                 st.caption((r.get("content") or "")[:160] + "…")
-                if st.button("➕ Add as source", key=f"web_add_{i}", width="stretch"):
+                if st.button("➕ Add as source", key=f"web_add_{i}", width="stretch", disabled=locked):
                     with st.spinner("Importing…"):
                         try:
                             _, text = fetch_url(r["url"])
@@ -104,7 +109,7 @@ def render_sources(nb):
         return
 
     all_on = all(s.get("enabled", True) for s in srcs)
-    if st.checkbox(f"Select all ({len(srcs)})", value=all_on, key=f"all_{nb['id']}_{len(srcs)}_{all_on}") != all_on:
+    if st.checkbox(f"Select all ({len(srcs)})", value=all_on, key=f"all_{nb['id']}_{len(srcs)}_{all_on}", disabled=locked) != all_on:
         for s in srcs:
             s["enabled"] = not all_on
         store.save(nb)
@@ -117,12 +122,13 @@ def render_sources(nb):
             value=s.get("enabled", True),
             key=f"on_{s['id']}",
             help=f"{s['chars']:,} characters",
+            disabled=locked,
         )
         if on != s.get("enabled", True):
             s["enabled"] = on
             store.save(nb)
             st.rerun()
-        if c2.button("✕", key=f"rm_{s['id']}", help="Remove source"):
+        if c2.button("✕", key=f"rm_{s['id']}", help="Remove source", disabled=locked):
             nb["sources"] = [x for x in srcs if x["id"] != s["id"]]
             store.save(nb)
             st.rerun()

@@ -148,8 +148,17 @@ def web_search(query: str, max_results: int = 6) -> list[dict]:
     from studybuddy.llm import setting
 
     key = setting("TAVILY_API_KEY")
-    if not key:
-        raise RuntimeError("TAVILY_API_KEY is not set, so web discovery is unavailable.")
+    if not key:  # keyless fallback (DuckDuckGo) so Discover works out of the box
+        try:
+            from ddgs import DDGS
+
+            hits = DDGS().text(query, max_results=max_results)
+            return [{"title": h.get("title", ""), "url": h.get("href", ""), "content": h.get("body", "")}
+                    for h in hits if h.get("href")]
+        except ImportError:
+            raise RuntimeError("Web discovery needs a TAVILY_API_KEY (free at tavily.com) or the 'ddgs' package.")
+        except Exception as e:
+            raise RuntimeError(f"Web search failed: {e}. Add a TAVILY_API_KEY for more reliable results.")
     r = requests.post(
         "https://api.tavily.com/search",
         json={"api_key": key, "query": query, "max_results": max_results},

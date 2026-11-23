@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel
 
 from api import jobs
-from studybuddy import store
+from studybuddy import store, tasks
 from studybuddy.llm import status as llm_status
 from studybuddy.sources import extract_file, fetch_url, fetch_youtube, make_source, youtube_id
 from studybuddy.studio import (
@@ -25,7 +25,7 @@ from studybuddy.studio import (
 
 MAX_UPLOAD = 50 * 1024 * 1024
 EMOJIS = ["📘", "🧬", "🧠", "🔭", "📐", "🏛️", "💡", "🌍", "⚗️", "📊", "🎨", "⚖️"]
-JOB_KINDS = set(STUDIO) | {"audio_render", "study_path", "quiz", "quiz_retry", "quiz_submit"}
+JOB_KINDS = tasks.JOB_KINDS
 
 app = FastAPI(title="AI Study Buddy API", version="1.0")
 app.add_middleware(
@@ -423,10 +423,6 @@ class JobIn(BaseModel):
     options: dict | None = None
 
 
-def _sources_for_agents(nb: dict) -> list[dict]:
-    return [{"id": s["id"], "name": s["name"], "text": s["text"]} for s in enabled_sources(nb)]
-
-
 def _find_track(nb: dict, tid: str) -> dict:
     for t in nb["study"]:
         if t["id"] == tid:
@@ -435,110 +431,10 @@ def _find_track(nb: dict, tid: str) -> dict:
 
 
 def _make_work(nb: dict, kind: str, o: dict):
-    """Returns work(job) -> commit(nb) -> output_id, validating options up front."""
-    if kind in STUDIO:
-        if not enabled_sources(nb):
-            raise ApiError(422, "no_sources", "Add and enable at least one source first.")
-
-        def work(job):
-            out = generate(kind, nb, o)
-
-            def commit(n):
-                oid = f"{kind}-{uuid.uuid4().hex[:6]}"
-                out.update(id=oid, created=datetime.now().isoformat(timespec="seconds"))
-                n["outputs"][oid] = out
-                return oid
-            return commit
-        return work
-
-    if kind == "audio_render":
-        oid = o.get("output_id")
-        out = nb["outputs"].get(oid)
-        if not out or not out.get("segments"):
-            raise ApiError(422, "bad_output", "Pick an Audio overview output to render.")
-
-        def work(job):
-            data = make_audio(out["segments"])
-            if not data:
-                raise RuntimeError("Audio synthesis failed (gTTS needs internet access).")
-            d = os.path.join(store.DIR, "..", "audio", nb["id"])
-            os.makedirs(d, exist_ok=True)
-            with open(os.path.join(d, f"{oid}.mp3"), "wb") as f:
-                f.write(data)
-
-            def commit(n):
-                n["outputs"][oid]["audio_ready"] = True
-                return oid
-            return commit
-        return work
-
-    from day9_pipeline.evaluator_graph import evaluation_graph
-    from day9_pipeline.graph import graph
-    from day9_pipeline.quiz_graph import quiz_graph
-    from day9_pipeline.retry_graph import retry_graph
-
-    if kind == "study_path":
-        topic = (o.get("topic") or "").strip()
-        if not topic:
-            raise ApiError(422, "no_topic", "options.topic is required.")
-
-        def work(job):
-            srcs = _sources_for_agents(nb)
-            r = graph.invoke({"topic": topic, "sources": srcs, "subtopics": [], "study_notes": [],
-                              "quiz_questions": [], "user_answers": [], "quiz_score": None, "weak_topics": [],
-                              "retry_count": 0, "analysis": "", "suggestions": ""})
-            r.pop("sources", None)
-            r.update(id="t" + uuid.uuid4().hex[:8], grounded=bool(srcs))
-
-            def commit(n):
-                n["study"].append(r)
-                return r["id"]
-            return commit
-        return work
-
-    track = _find_track(nb, o.get("track_id", ""))
-    tid = track["id"]
-
-    def replace(n, new):
-        new.pop("sources", None)
-        # LangGraph drops keys outside AgentState, so re-attach the API-level fields
-        new["id"] = tid
-        new["grounded"] = track.get("grounded", False)
-        new.setdefault("quiz_round", track.get("quiz_round", 0))
-        for i, t in enumerate(n["study"]):
-            if t["id"] == tid:
-                n["study"][i] = new
-        return tid
-
-    if kind in ("quiz", "quiz_retry"):
-        def work(job):
-            g = quiz_graph if kind == "quiz" else retry_graph
-            out = g.invoke({**track, "sources": _sources_for_agents(nb)})
-            out.update(quiz_score=None, analysis="", suggestions="", user_answers=[], weak_topics=[],
-                       quiz_round=track.get("quiz_round", 0) + 1, id=tid)
-            if not out.get("quiz_questions"):
-                raise RuntimeError("The model returned no valid questions. Try again.")
-            return lambda n: replace(n, out)
-        return work
-
-    if kind == "quiz_submit":
-        answers = o.get("answers") or []
-        if len(answers) != len(track.get("quiz_questions") or []) or None in answers:
-            raise ApiError(422, "incomplete", "Answer every question before submitting.")
-
-        def work(job):
-            out = evaluation_graph.invoke({**track, "user_answers": answers})
-            return lambda n: replace(n, out)
-        return work
-
-    raise ApiError(422, "bad_kind", f"Unknown job kind '{kind}'.")
-
-
-def _label(kind: str, o: dict) -> str:
-    if kind in STUDIO:
-        return f"Generating {STUDIO[kind][1]}"
-    return {"audio_render": "Rendering audio", "study_path": "Building study path", "quiz": "Generating quiz",
-            "quiz_retry": "Generating retry quiz", "quiz_submit": "Marking quiz"}[kind]
+    try:
+        return tasks.make_work(nb, kind, o)
+    except tasks.TaskError as e:
+        raise ApiError(404 if e.code == "track_not_found" else 422, e.code, e.message)
 
 
 @app.post("/api/notebooks/{nid}/jobs", status_code=202)
@@ -548,7 +444,7 @@ def start_job(nid: str, body: JobIn):
     nb = jobs.read(nid)
     o = body.options or {}
     work = _make_work(nb, body.kind, o)  # validates before taking the lock
-    job = jobs.begin(nid, body.kind, _label(body.kind, o))
+    job = jobs.begin(nid, body.kind, tasks.label(body.kind))
     jobs.run_in_thread(job, work)
     return job.public()
 

@@ -27,7 +27,16 @@ except Exception:  # pragma: no cover
     pass
 
 
+import contextvars
+
+# Per-thread settings handed over by the UI (st.session_state is not readable from worker threads).
+SETTINGS_OVERRIDE: contextvars.ContextVar = contextvars.ContextVar("settings_override", default=None)
+
+
 def setting(name: str, default: str | None = None) -> str | None:
+    ov = SETTINGS_OVERRIDE.get()
+    if ov and ov.get(name):
+        return str(ov[name])
     # 1) keys typed into the sidebar are per-browser-session (never shared between visitors)
     try:
         import streamlit as st

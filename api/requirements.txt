@@ -11,3 +11,4 @@ google-genai>=1.0
 openai>=1.59
 gTTS>=2.5
 youtube-transcript-api>=0.6.2
+ddgs>=9.0

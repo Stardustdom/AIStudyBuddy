@@ -27,6 +27,17 @@ header[data-testid="stHeader"] {background: transparent;}
 [class*="st-key-title_edit"] input:hover {border-color: rgba(148,163,184,.3);}
 [class*="st-key-title_edit"] input:focus {border-color: #818cf8; background: rgba(129,140,248,.08);}
 
+/* running-job pill */
+.sb-job {display:flex; align-items:center; gap:10px; padding:.55rem .9rem; border-radius:12px;
+         background: rgba(129,140,248,.14); border:1px solid rgba(129,140,248,.35);}
+.sb-job-t {margin-left:auto; opacity:.7; font-size:.8rem;}
+.sb-spin {width:14px; height:14px; border-radius:50%; border:2px solid rgba(129,140,248,.35); border-top-color:#818cf8;
+          animation: sbspin .8s linear infinite;}
+@keyframes sbspin {to {transform: rotate(360deg);}}
+@media (prefers-reduced-motion: reduce) {.sb-spin {animation: none;}}
+/* disabled controls look disabled */
+.stButton > button:disabled, .stDownloadButton > button:disabled {opacity:.38; cursor:not-allowed; transform:none; box-shadow:none;}
+
 /* panels */
 div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 16px; border: 1px solid rgba(148,163,184,.16);

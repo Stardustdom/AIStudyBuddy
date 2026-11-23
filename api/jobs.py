@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from studybuddy import store
-from studybuddy.llm import CANCEL_EVENT, Cancelled
+from studybuddy.llm import CANCEL_EVENT, SETTINGS_OVERRIDE, Cancelled
 
 JOB_TIMEOUT_S = 15 * 60
 
@@ -57,13 +57,16 @@ def _lock_for(nb_id: str) -> threading.RLock:
         return _nb_locks.setdefault(nb_id, threading.RLock())
 
 
-def ensure_ids(nb: dict) -> None:
+def ensure_ids(nb: dict) -> bool:
     """Older (Streamlit-era) messages/notes have no ids; give them stable ones."""
-    for coll, prefix in (("messages", "m"), ("notes", "n")):
-        for item in nb.get(coll, []):
-            item.setdefault("id", prefix + uuid.uuid4().hex[:8])
-    for t in nb.get("study", []):
-        t.setdefault("id", "t" + uuid.uuid4().hex[:8])
+    changed = False
+    items = [(i, "m") for i in nb.get("messages", [])] + [(i, "n") for i in nb.get("notes", [])] + [
+        (t, "t") for t in nb.get("study", [])]
+    for item, prefix in items:
+        if "id" not in item:
+            item["id"] = prefix + uuid.uuid4().hex[:8]
+            changed = True
+    return changed
 
 
 @contextmanager
@@ -82,7 +85,8 @@ def read(nb_id: str) -> dict:
     nb = store.load(nb_id)
     if nb is None:
         raise NotFound(nb_id)
-    ensure_ids(nb)
+    if ensure_ids(nb):  # persist ids given to legacy items so they stay stable
+        store.save(nb)
     return nb
 
 
@@ -154,12 +158,13 @@ def get(nb_id: str, job_id: str) -> Job:
         return job
 
 
-def run_in_thread(job: Job, work) -> None:
+def run_in_thread(job: Job, work, settings: dict | None = None) -> None:
     """work(job) -> commit(nb) -> output_id. Compute happens unlocked; commit is applied under the notebook lock,
     and only if the job was not cancelled meanwhile."""
 
     def target():
         CANCEL_EVENT.set(job.cancel)
+        SETTINGS_OVERRIDE.set(settings)
         try:
             commit = work(job)
             if job.cancel.is_set() or job.status != "running":

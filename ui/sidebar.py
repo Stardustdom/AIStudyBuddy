@@ -7,12 +7,12 @@ from studybuddy.llm import status
 from ui.home import go_home, open_notebook
 
 
-def render_sidebar(nb=None):
+def render_sidebar(nb=None, locked=False, on_home=None):
     with st.sidebar:
         st.markdown("## 📚 AI Study Buddy")
         if nb is not None:
             if st.button("← All notebooks", width="stretch", type="primary"):
-                go_home()
+                (on_home or go_home)()
             st.divider()
 
         if nb is not None:
@@ -24,7 +24,7 @@ def render_sidebar(nb=None):
                     "💾 Backup (JSON)", json.dumps(nb, ensure_ascii=False), f"{nb['title']}.json",
                     width="stretch", help="Hosted apps can reset their disk - keep a backup.",
                 )
-                if st.button("🗑 Delete notebook", width="stretch"):
+                if st.button("🗑 Delete notebook", width="stretch", disabled=locked):
                     store.delete(nb["id"])
                     go_home()
 

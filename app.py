@@ -1,10 +1,12 @@
 import streamlit as st
 
+from api import jobs
 from studybuddy import store
 from studybuddy.llm import status
 from ui.style import inject, topbar
 from ui.chat import render_chat
 from ui.home import go_home, render_home
+from ui.jobs_ui import is_locked, leave_dialog, render_jobbar
 from ui.notes_view import render_notes
 from ui.quiz_view import render_quiz
 from ui.sidebar import render_sidebar
@@ -25,38 +27,51 @@ nb = store.load(st.session_state["nb_id"]) if st.session_state.get("nb_id") else
 if st.session_state.get("nb_id") and nb is None:  # deleted / unknown id
     st.session_state.pop("nb_id", None)
     st.query_params.clear()
+elif nb is not None and jobs.ensure_ids(nb):  # persist ids of legacy items so job commits can find them
+    store.save(nb)
 
-render_sidebar(nb)
+def _home():
+    """Leaving while a job runs asks first (Stop and leave / Stay)."""
+    if nb is not None and is_locked(nb):
+        leave_dialog(nb, go_home)
+    else:
+        go_home()
+
+
+locked = nb is not None and is_locked(nb)
+render_sidebar(nb, locked, _home)
 
 if nb is None:
     render_home()
     st.stop()
 
 def _rename(title):
-    nb["title"] = title
-    store.save(nb)
+    with jobs.edit(nb["id"]) as n:  # serialised with any running job's commit
+        n["title"] = title
     st.rerun()
 
 
-topbar(nb, status(), go_home, _rename)
+topbar(nb, status(), _home, _rename)
+render_jobbar(nb)
+locked = is_locked(nb)  # may have changed while the bar was polling
 
 col_sources, col_main, col_studio = st.columns([1.05, 2.3, 1.15], gap="medium")
 
 with col_sources:
     with st.container(border=True):
-        render_sources(nb)
+        render_sources(nb, locked)
 
 with col_main:
     tab_chat, tab_study, tab_quiz, tab_notes = st.tabs(["💬 Chat", "🎓 Study path", "🧠 Quiz", "📝 Notes"])
     with tab_chat:
-        render_chat(nb)
+        render_chat(nb, locked)
     with tab_study:
-        render_study_path(nb)
+        render_study_path(nb, locked)
     with tab_quiz:
-        render_quiz(nb)
+        render_quiz(nb, locked)
     with tab_notes:
         render_notes(nb)
 
 with col_studio:
     with st.container(border=True):
-        render_studio(nb)
+        render_studio(nb, locked)

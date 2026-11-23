@@ -1,11 +1,13 @@
 import re
+import uuid
 
 import streamlit as st
 
-from day9_pipeline.intent_router import QUIZ_KEYWORDS, NEW_STUDY_KEYWORDS, GENERAL_CHAT
+from api import jobs
+from day9_pipeline.intent_router import GENERAL_CHAT, NEW_STUDY_KEYWORDS, QUIZ_KEYWORDS
 from studybuddy import store
-from studybuddy.studio import ask, enabled_sources, suggest_questions
-from ui.study_page import build_study_track
+from studybuddy.studio import DEFAULT_TITLES, ask, enabled_sources, suggest_questions
+from ui.jobs_ui import lock_hint, start
 
 
 def route(prompt: str, has_sources: bool) -> str:
@@ -35,12 +37,17 @@ def _citations(cites):
 
 def _save_note(nb, content):
     title = re.sub(r"[#*_`>\[\]]", "", content).strip().split("\n")[0][:50] or "Note"
-    nb["notes"].append({"title": title, "content": content})
-    store.save(nb)
+    with jobs.edit(nb["id"]) as n:
+        n["notes"].append({"title": title, "content": content})
     st.toast("Saved to Notes 📌")
 
 
-def render_chat(nb):
+def _append(nid, msg):
+    with jobs.edit(nid) as n:
+        n["messages"].append({"id": "m" + uuid.uuid4().hex[:8], **msg})
+
+
+def render_chat(nb, locked=False):
     srcs = enabled_sources(nb)
 
     # ------------------------------------------------------------ history
@@ -49,6 +56,12 @@ def render_chat(nb):
             st.markdown(m["content"])
             if m["role"] == "assistant":
                 _citations(m.get("citations"))
+                if m.get("stopped"):
+                    st.caption("⏹ Response stopped")
+                    prev = nb["messages"][i - 1]["content"] if i and nb["messages"][i - 1]["role"] == "user" else None
+                    if prev and st.button("↻ Retry", key=f"retry_{nb['id']}_{i}", disabled=locked, help=lock_hint(nb)):
+                        st.session_state.pending_prompt = prev
+                        st.rerun()
                 if m.get("savable", True) and st.button("📌 Save to notes", key=f"save_{nb['id']}_{i}"):
                     _save_note(nb, m["content"])
 
@@ -66,7 +79,7 @@ def render_chat(nb):
             st.markdown(f"#### Ask about your {len(srcs)} source(s)")
             key = f"sugg_{nb['id']}"
             if key not in st.session_state:
-                if st.button("💡 Suggest questions", width="stretch"):
+                if st.button("💡 Suggest questions", width="stretch", disabled=locked, help=lock_hint(nb)):
                     with st.spinner("Reading your sources…"):
                         try:
                             st.session_state[key] = suggest_questions(nb)
@@ -75,61 +88,85 @@ def render_chat(nb):
                     st.rerun()
             else:
                 for j, q in enumerate(st.session_state[key]):
-                    if st.button(q, key=f"sq_{j}", width="stretch"):
+                    if st.button(q, key=f"sq_{j}", width="stretch", disabled=locked):
                         st.session_state.pending_prompt = q
                         st.rerun()
 
-    prompt = st.chat_input("Ask about your sources…" if srcs else "Add a source, or ask me to teach a topic…")
-    prompt = prompt or st.session_state.pop("pending_prompt", None)
+    typed = st.chat_input(
+        "Ask about your sources…" if srcs else "Add a source, or ask me to teach a topic…",
+        disabled=locked,
+    )
+    prompt = typed or (None if locked else st.session_state.pop("pending_prompt", None))
     if not prompt:
         return
 
-    nb["messages"].append({"role": "user", "content": prompt})
-    if nb["title"] in ("Untitled notebook", "New notebook", ""):
-        nb["title"] = prompt[:40]
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # One job at a time: chat takes the same notebook lock as the Studio tools.
+    try:
+        job = jobs.begin(nb["id"], "chat", "Answering")
+    except jobs.Busy as b:
+        st.toast(f"{b.job.label} is still running. Stop it or wait.", icon="⏳")
+        return
 
-    intent = route(prompt, bool(srcs))
+    nid = nb["id"]
+    text, error, cites, stream, intent, completed = "", None, [], None, None, False
+    try:
+        with jobs.edit(nid) as n:
+            n["messages"].append({"id": "m" + uuid.uuid4().hex[:8], "role": "user", "content": prompt})
+            if n["title"] in DEFAULT_TITLES:
+                n["title"] = prompt[:40]
+        nb = store.load(nid)
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    with st.chat_message("assistant"):
-        cites, savable = None, True
-        try:
+        intent = route(prompt, bool(srcs))
+        with st.chat_message("assistant"):
             if intent == "CONTEXT_QA":
+                st.button("■ Stop", key="stop_chat", help="Stop generating (keeps the text so far)")
                 stream, cites = ask(nb, prompt)
-                reply = st.write_stream(c for c in stream)
-                _citations(cites)
-            elif intent == "NEW_STUDY":
-                with st.spinner("Planner → Researcher agents are building your study path…"):
-                    build_study_track(nb, prompt)
-                reply = (
-                    f"✅ Study path for **{prompt}** is ready"
-                    f"{' from your sources' if srcs else ''}. Open the **🎓 Study path** tab — "
-                    "then take the quiz in **🧠 Quiz**."
-                )
-                st.markdown(reply)
-                savable = False
-            elif intent == "QUIZ":
-                if nb["study"]:
-                    reply = "Open the **🧠 Quiz** tab to take or generate a quiz."
-                else:
-                    reply = ("Quizzes are built from a study path. Click **Build study path** in the "
-                             "**🎓 Study path** tab first (it uses your sources).")
-                st.markdown(reply)
-                savable = False
-            else:
-                reply = ("👋 I'm your Study Buddy. Add sources on the left and ask me anything about them — "
-                         "or open the Studio to generate a study guide, flashcards, quiz, mind map or audio overview.")
-                st.markdown(reply)
-                savable = False
-        except Exception as e:
-            reply = f"⚠️ {e}"
-            st.error(reply)
-            savable = False
 
-    msg = {"role": "assistant", "content": reply, "savable": savable}
-    if cites:
-        msg["citations"] = cites
-    nb["messages"].append(msg)
-    store.save(nb)
+                def tracked():
+                    nonlocal text
+                    for tok in stream:  # a click on Stop reruns the script and ends this loop
+                        text += tok
+                        yield tok
+
+                st.write_stream(tracked())
+                _citations(cites)
+            if intent != "CONTEXT_QA":
+                if intent == "NEW_STUDY":
+                    # study path is a background job: finish this chat job first, then start it
+                    text = (f"Building a study path for **{prompt}**{' from your sources' if srcs else ''}. "
+                            "Watch the progress bar above; the path will appear in the **🎓 Study path** tab.")
+                elif intent == "QUIZ":
+                    text = ("Open the **🧠 Quiz** tab to take or generate a quiz." if nb["study"] else
+                            "Quizzes are built from a study path. Use **Build study path** in the "
+                            "**🎓 Study path** tab first.")
+                else:
+                    text = ("👋 I'm your Study Buddy. Add sources on the left and ask me anything about them — "
+                            "or open the Studio to generate a guide, flashcards, quiz, mind map or audio overview.")
+                st.markdown(text)
+        completed = True
+    except Exception as e:  # noqa: BLE001
+        error = str(e) or type(e).__name__
+        st.error(f"⚠️ {error}")
+    finally:
+        # No st.* calls here: this also runs when Stop interrupts the script mid-stream.
+        if stream is not None and hasattr(stream, "close"):
+            stream.close()  # closes the upstream LLM request
+        stopped = (not completed) and error is None and bool(text)  # Stop (or a rerun) cut the stream
+        try:
+            if text or error:
+                msg = {"role": "assistant", "content": text or f"⚠️ {error}", "savable": bool(text) and not error and intent == "CONTEXT_QA",
+                       "stopped": stopped}
+                if cites:
+                    msg["citations"] = [{"n": c["n"], "source": c["source"], "text": c["text"]} for c in cites]
+                _append(nid, msg)
+        except jobs.NotFound:
+            pass
+        jobs.finish(job, "failed" if error else "done", error)
+
+    # (NEW_STUDY) the chat job has released the lock, so the background job can take it
+    if intent == "NEW_STUDY":
+        start(store.load(nid), "study_path", {"topic": prompt})
     st.rerun()
+
