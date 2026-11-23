@@ -92,6 +92,49 @@ def model_name(provider: str | None = None) -> str:
     }.get(p, "unknown")
 
 
+_DISCOVERED: dict[str, str] = {}
+_SKIP = ("whisper", "guard", "tts", "embed", "vision-preview", "image", "audio", "orpheus", "safeguard", "imagen", "veo", "live")
+_PREFER = {
+    "groq": ("llama-3.3", "llama-3.1-70b", "gpt-oss-120b", "llama-4", "qwen", "gpt-oss", "llama"),
+    "gemini": ("flash", "pro"),
+}
+
+
+def discover_model(provider: str) -> str | None:
+    """Ask the provider which chat models this key can use and pick the best current one."""
+    if provider in _DISCOVERED:
+        return _DISCOVERED[provider]
+    import requests
+
+    names: list[str] = []
+    try:
+        if provider == "groq":
+            r = requests.get("https://api.groq.com/openai/v1/models",
+                             headers={"Authorization": f"Bearer {setting('GROQ_API_KEY')}"}, timeout=15)
+            r.raise_for_status()
+            names = [m["id"] for m in r.json().get("data", []) if m.get("active", True)]
+        elif provider == "gemini":
+            key = setting("GEMINI_API_KEY") or setting("GOOGLE_API_KEY")
+            r = requests.get("https://generativelanguage.googleapis.com/v1beta/models",
+                             params={"key": key, "pageSize": 200}, timeout=15)
+            r.raise_for_status()
+            names = [m["name"].split("/", 1)[1] for m in r.json().get("models", [])
+                     if "generateContent" in m.get("supportedGenerationMethods", [])]
+    except Exception:
+        return None
+    names = [n for n in names if not any(b in n.lower() for b in _SKIP)]
+    for pref in _PREFER.get(provider, ()):
+        cands = sorted([n for n in names if pref in n.lower() and "preview" not in n.lower() and "exp" not in n.lower()],
+                       reverse=True)
+        if cands:
+            _DISCOVERED[provider] = cands[0]
+            return cands[0]
+    if names:
+        _DISCOVERED[provider] = names[0]
+        return names[0]
+    return None
+
+
 class LLM:
     def __init__(self, temperature: float = 0.2):
         self.temperature = temperature
@@ -122,6 +165,13 @@ class LLM:
                     return
                 except Exception as e:
                     last = e
+                    if not started and not setting(prov.upper() + "_MODEL") and (
+                        "404" in str(e) or "NOT_FOUND" in str(e) or "does not exist" in str(e)
+                    ):
+                        found = discover_model(prov)
+                        if found and found != self.model:
+                            self.model = found
+                            continue
                     transient = any(t in str(e) for t in ("503", "429", "UNAVAILABLE", "overloaded", "RESOURCE_EXHAUSTED"))
                     if started or not transient:
                         raise
@@ -130,7 +180,7 @@ class LLM:
 
     def _use(self, prov):
         self.active = prov
-        self.model = model_name(prov)
+        self.model = _DISCOVERED.get(prov) if (prov in _DISCOVERED and not setting(prov.upper() + "_MODEL")) else model_name(prov)
 
     def _dispatch(self, prov):
         self.provider_in_use = prov
