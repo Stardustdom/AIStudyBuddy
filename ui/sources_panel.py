@@ -1,6 +1,7 @@
 import streamlit as st
 
 from studybuddy import store
+from studybuddy.studio import DEFAULT_TITLES, suggest_title
 from studybuddy.sources import extract_file, fetch_url, make_source, web_search
 
 ICON = {"pdf": "📕", "docx": "📘", "url": "🌐", "text": "📝", "web": "🔎"}
@@ -8,6 +9,8 @@ ICON = {"pdf": "📕", "docx": "📘", "url": "🌐", "text": "📝", "web": "�
 
 def _add(nb, src):
     nb["sources"].append(src)
+    if nb["title"] in DEFAULT_TITLES:  # auto-name the notebook from its sources
+        nb["title"] = suggest_title(nb) or src["name"].rsplit(".", 1)[0][:50]
     store.save(nb)
 
 

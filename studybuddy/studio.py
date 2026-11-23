@@ -184,3 +184,23 @@ def generate(kind: str, nb: dict) -> dict:
         md = "\n\n".join(f"**Host {s['speaker']}:** {s['text']}" for s in segs)
         return {"title": title, "kind": kind, "markdown": md, "segments": segs}
     raise KeyError(kind)
+
+
+# --------------------------------------------------------- notebook naming
+DEFAULT_TITLES = ("Untitled notebook", "New notebook", "")
+
+
+def suggest_title(nb: dict) -> str | None:
+    """Short descriptive notebook title from the enabled sources. None if it can't be made."""
+    srcs = enabled_sources(nb)
+    if not srcs:
+        return None
+    try:
+        out = get_llm(0.2).invoke(
+            "Give a short, descriptive title (3 to 6 words, no quotes, no trailing punctuation) for a notebook "
+            "built from these sources. Reply with the title only.\n\n" + digest(srcs, 3000)
+        ).content
+        title = out.strip().splitlines()[0].strip(" \"'*#.")
+        return title[:60] or None
+    except Exception:
+        return None

@@ -4,7 +4,7 @@ from studybuddy import store
 from studybuddy.llm import status
 from ui.style import inject, topbar
 from ui.chat import render_chat
-from ui.home import render_home
+from ui.home import go_home, render_home
 from ui.notes_view import render_notes
 from ui.quiz_view import render_quiz
 from ui.sidebar import render_sidebar
@@ -32,7 +32,13 @@ if nb is None:
     render_home()
     st.stop()
 
-topbar(nb["title"], len(nb["sources"]), sum(1 for x in nb["sources"] if x.get("enabled", True)), status())
+def _rename(title):
+    nb["title"] = title
+    store.save(nb)
+    st.rerun()
+
+
+topbar(nb, status(), go_home, _rename)
 
 col_sources, col_main, col_studio = st.columns([1.05, 2.3, 1.15], gap="medium")
 

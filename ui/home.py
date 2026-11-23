@@ -64,7 +64,8 @@ def _card(item, list_view=False):
                 _rename(item)
             if st.button("🗑 Delete", key=f"dl_{item['id']}", width="stretch"):
                 _delete(item)
-        st.markdown(f"**{item['title'][:60]}**")
+        if st.button(item["title"][:60], key=f"tt_{item['id']}", type="tertiary", help="Click to rename"):
+            _rename(item)
         st.caption(f"{pretty(item['modified'])} · {item['n_sources']} source{'s' if item['n_sources'] != 1 else ''}")
         if st.button("Open", key=f"op_{item['id']}", width="stretch", type="secondary"):
             open_notebook(item["id"])

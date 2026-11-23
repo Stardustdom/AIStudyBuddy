@@ -19,6 +19,14 @@ header[data-testid="stHeader"] {background: transparent;}
 .sb-chip {font-size:.72rem; font-weight:600; padding:.28rem .65rem; border-radius:999px;
           background: rgba(129,140,248,.14); color:#a5b4fc; border:1px solid rgba(129,140,248,.28);}
 
+/* inline-editable notebook title */
+[class*="st-key-title_edit"] input {
+    font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; background: transparent;
+    border: 1px solid transparent; padding: .25rem .6rem; border-radius: 10px;
+}
+[class*="st-key-title_edit"] input:hover {border-color: rgba(148,163,184,.3);}
+[class*="st-key-title_edit"] input:focus {border-color: #818cf8; background: rgba(129,140,248,.08);}
+
 /* panels */
 div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 16px; border: 1px solid rgba(148,163,184,.16);
@@ -61,11 +69,18 @@ def inject():
     st.markdown(CSS, unsafe_allow_html=True)
 
 
-def topbar(title: str, n_sources: int, n_active: int, model: str):
-    safe = title.replace("<", "&lt;")
-    st.markdown(
-        f'<div class="sb-top"><h1 class="sb-title">📖 {safe}</h1>'
-        f'<span class="sb-chip">{n_active}/{n_sources} sources active</span>'
+def topbar(nb, model: str, on_home, on_rename):
+    """Header: back button, click-to-edit title, status chips."""
+    c0, c1, c2 = st.columns([1.2, 5, 3.2], vertical_alignment="center")
+    if c0.button("← Home", key="back_home", width="stretch", help="Back to all notebooks"):
+        on_home()
+    new = c1.text_input("Notebook title", value=nb["title"], key=f"title_edit_{nb['id']}",
+                        label_visibility="collapsed", help="Click the title to rename")
+    if new.strip() and new.strip() != nb["title"]:
+        on_rename(new.strip())
+    n_act = sum(1 for x in nb["sources"] if x.get("enabled", True))
+    c2.markdown(
+        f'<div style="text-align:right"><span class="sb-chip">{n_act}/{len(nb["sources"])} sources active</span> '
         f'<span class="sb-chip">🤖 {model}</span></div>',
         unsafe_allow_html=True,
     )

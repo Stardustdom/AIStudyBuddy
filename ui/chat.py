@@ -85,7 +85,7 @@ def render_chat(nb):
         return
 
     nb["messages"].append({"role": "user", "content": prompt})
-    if nb["title"] == "Untitled notebook":
+    if nb["title"] in ("Untitled notebook", "New notebook", ""):
         nb["title"] = prompt[:40]
     with st.chat_message("user"):
         st.markdown(prompt)

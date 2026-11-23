@@ -17,11 +17,6 @@ def render_sidebar(nb=None):
 
         if nb is not None:
             with st.expander("⚙️ Current notebook"):
-                new_title = st.text_input("Title", value=nb["title"], key=f"title_{nb['id']}")
-                if new_title.strip() and new_title.strip() != nb["title"]:
-                    nb["title"] = new_title.strip()
-                    store.save(nb)
-                    st.rerun()
                 st.download_button(
                     "⬇ Export (Markdown)", store.export_markdown(nb), f"{nb['title']}.md", width="stretch"
                 )
