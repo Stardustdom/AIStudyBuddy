@@ -1,6 +1,8 @@
 import streamlit as st
 
 from studybuddy import store
+from studybuddy.llm import status
+from ui.style import inject, topbar
 from ui.chat import render_chat
 from ui.notes_view import render_notes
 from ui.quiz_view import render_quiz
@@ -11,16 +13,7 @@ from ui.study_page import render_study_path
 
 st.set_page_config(page_title="AI Study Buddy", page_icon="📚", layout="wide")
 
-st.markdown(
-    """
-<style>
-.block-container {padding-top: 2.2rem; max-width: 1500px;}
-section[data-testid="stSidebar"] {min-width: 280px; max-width: 300px;}
-div[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 12px;}
-</style>
-""",
-    unsafe_allow_html=True,
-)
+inject()
 
 # ------------------------------------------------------------ current notebook
 nb = store.load(st.session_state.get("nb_id", "")) if st.session_state.get("nb_id") else None
@@ -35,7 +28,7 @@ if nb is None:
 
 render_sidebar(nb)
 
-st.title(f"📖 {nb['title']}")
+topbar(nb["title"], len(nb["sources"]), sum(1 for x in nb["sources"] if x.get("enabled", True)), status())
 
 col_sources, col_main, col_studio = st.columns([1.05, 2.3, 1.15], gap="medium")
 

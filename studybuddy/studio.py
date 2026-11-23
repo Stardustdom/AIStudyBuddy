@@ -9,7 +9,11 @@ import json
 import re
 
 from studybuddy.llm import get_llm
-from studybuddy.sources import digest, retrieve
+from studybuddy.sources import build_chunks, digest, retrieve
+
+_BROAD = re.compile(
+    r"(?<![a-z])(documents?|sources?|files?|pdfs?|material|overview|summar\w*|main (topic|idea|point)s?|"
+    r"what.*(is|are) (this|these|it)|tell me (more|everything)|key (points|takeaways))(?![a-z])", re.I)
 
 NOT_FOUND = "I couldn't find that in your sources."
 
@@ -57,6 +61,12 @@ def ask(nb: dict, question: str, k: int = 6):
     """Returns (stream_generator, citations). Citations = [{n, source, text}]."""
     srcs = enabled_sources(nb)
     hits = retrieve(srcs, question, k=k)
+    # Broad / "about the documents" questions share no keywords with the text, so keyword
+    # retrieval finds nothing. Fall back to the opening of every source so the model can answer.
+    if srcs and (not hits or _BROAD.search(question)):
+        seen = {(h["source_id"], h["idx"]) for h in hits}
+        overview = [c for c in build_chunks(srcs) if c["idx"] < 2 and (c["source_id"], c["idx"]) not in seen]
+        hits = (hits + overview)[: max(k, 12)]
     if not hits:
         def _nf():
             yield NOT_FOUND if srcs else "Add at least one source (left panel) and I'll answer from it."
